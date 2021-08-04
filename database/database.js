@@ -81,6 +81,16 @@ async function checkCredentials(username , pwd){
     }
 }
 
+async function getAggregate(table , aggr){
+    const query = `SELECT ${aggr} from ${table};`
+    try{
+        const { rows } = await pool.query(query);
+        if ( rows ) return rows[0];
+    }catch(err){
+        console.log('error in getAggregate', err);
+    }
+}
+
 async function getListProblem() {
     console.log('getListProblem ()');
     const query_text = 'SELECT * from probleme_type ; ';
@@ -328,6 +338,60 @@ async function getListInterventionUndone(num_tech_main = null) {
     }
 }
 
+async function getDataInTable(table , arrayProp , arrayValue){
+    const whereClause = arrayProp.map( (prop,index) => `${prop} = $${index+1}`).join(' AND ');
+    const query_text = `SELECT * from ${table}
+    WHERE ${whereClause}`;
+    try{
+        const {rows} = await pool.query(query_text , arrayValue); 
+        if(rows) return rows;
+        else return new Error('no data in getDataInTable');
+    }catch(err){
+        console.log('error in getDataInTable',table, err);
+    }
+}
+
+async function getListIntervention(num_tech_main , debut , fin , done , probleme_resolu){
+        
+    let whereClauseArray = [
+        'num_app_user_tech_main_creator = ',
+        'date_programme >= ',
+        'date_programme <= ',
+        'done = ',
+        'probleme_resolu =',
+    ];
+    let arrayValue = [ num_tech_main , debut, fin , done ,probleme_resolu ];
+    let indexToSuppr = [];
+    for( const [index,val] of arrayValue.entries()){
+        console.log(index,val);
+        if(val  === 'nd') indexToSuppr.push(index);
+    }
+    console.log('indexToSuppr', indexToSuppr);
+    for( const [index,i] of indexToSuppr.entries() ){
+        let iSuppr = i - index;//everytime we splice the size of the array goes down
+        arrayValue.splice(iSuppr,1);
+        whereClauseArray.splice(iSuppr,1);
+    }
+    console.log('whereClause' ,whereClauseArray);
+    console.log('arrayValue', arrayValue);
+    let whereClause = whereClauseArray.map( (item,index) => ` ${item} $${index+1} `).join(' AND ');
+    console.log('whereClause' , whereClause);
+    let query_text = `SELECT * from view_intervention_full
+    WHERE ${whereClause}
+    ORDER BY date_programme ASC`;
+
+    console.log(query_text);
+    console.log(arrayValue);
+      
+    try{
+        const {rows} = await pool.query(query_text,arrayValue); 
+        if(rows) return rows;
+    }catch(err){
+        console.log('error in getListIntervention',err);
+    }
+    
+}
+
 async function getNbInterventionUndone () {
     const query_text = `SELECT count(*) as nb_intervention_undone from view_intervention_undone ;`;
 
@@ -416,6 +480,7 @@ async function updateDecharge(setPropArray,setValueArray,wherePropArray, whereVa
 module.exports = {
     checkInDatabase,
     checkCredentials,
+    getAggregate,
     getListProblem ,
     getListLieu,
     getListProblemeStatut,
@@ -423,6 +488,7 @@ module.exports = {
     getHistoryNotificationForUser,
     getListNotificationUnanswered,
     getListInterventionUndone,
+    getListIntervention,
     getAllDataInTable,
     getNbInterventionUndone,
     getListOfInterventionFromNotif,

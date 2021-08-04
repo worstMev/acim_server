@@ -146,6 +146,35 @@ function initSocketIO(httpServer){
             if( notifsTab ) io.to(socket.num_user).emit('notifs history', notifsTab);
         });
 
+        socket.on('get intervention history', async (num_tech_main , date_debut , date_fin , statut) => {
+            console.log(new Date().toLocaleTimeString()+' socket.on(get intervention history)' , num_tech_main , date_debut , date_fin , statut);
+            try{
+                const minDateProgramme = await database.getAggregate('view_intervention_full' , 'min(date_programme)');
+                if(!date_debut) date_debut = minDateProgramme.min;
+                
+                console.log(' socket.on(get intervention history)' , num_tech_main , date_debut , date_fin , statut);
+                const interventionList = await database.getListIntervention(num_tech_main,date_debut , date_fin , statut.done , statut.probleme_resolu);
+
+                console.log('list Intervention' , interventionList  );
+                socket.emit('intervention history' , interventionList  );
+            }catch(err){
+                console.log('error in socket.on(get intervention history)',err);
+            }
+
+        });
+
+        socket.on('get oldest intervention date', async () =>{
+            try{
+                const minDateProgramme = await database.getAggregate('view_intervention_full' , 'min(date_programme)');
+                console.log('minDateProgramme' ,minDateProgramme);
+                if (minDateProgramme) {
+                    socket.emit('oldest intervention date', minDateProgramme.min);
+                }
+            }catch(err){
+                console.log('error in socket.on(get oldest intervention date)', err);
+            }
+        });
+
         socket.on('get notifs list unanswered',async () => {
             console.log('get notifs list unanswered' );
             const notifsTab = await database.getListNotificationUnanswered();
@@ -161,9 +190,6 @@ function initSocketIO(httpServer){
             const arrayUndoneIntervention = await database.getListInterventionUndone(num_tech_main);
             //console.log('list undone intervention', arrayUndoneIntervention);
             socket.emit('list undone intervention' , arrayUndoneIntervention);
-
-
-
         });
 
         socket.on('get nb intervention undone' , async () => {
@@ -182,6 +208,14 @@ function initSocketIO(httpServer){
             else console.log('no usersList in get users list');
         });
 
+        socket.on('get tech_mains list' , async () => {
+            console.log('get tech_mains list');
+            const tech_mainsList = await database.getAllDataInTable('view_app_user_tech_main');
+            console.log('get tech_mains list' , tech_mainsList);
+            if(tech_mainsList) io.to(socket.num_user).emit('tech_mains list', tech_mainsList);
+            else console.log('no tech_mainsList in get tech_mains list');
+        });
+
         socket.on('get list intervention_notification' , async (num_user) => {
             console.log('get list intervention_notification', num_user);
             const int_notifList = await database.getListOfInterventionFromNotif(num_user);
@@ -189,8 +223,6 @@ function initSocketIO(httpServer){
             if (int_notifList) {
                 socket.emit('list intervention_notification', int_notifList);
             }
-
-
         });
 
         socket.on('get intervention data' , async (num_intervention) => {
