@@ -316,6 +316,17 @@ async function createDechargeMateriel ( arrayProp , valueProp){
     }
 }
 
+async function getDechargeInfo( num_decharge ){
+    const query = 'SELECT * from view_decharge_full where num_decharge = $1';
+    try{
+        const { rows } = await pool.query(query,[num_decharge]);
+        console.log(rows);
+        if (rows) return rows;
+    }catch(err){
+        console.log('error in getDechargeInfo', err);
+    }
+}
+
 async function getListInterventionUndone(num_tech_main = null) {
     let whereClause;
     let arrayValue;
@@ -492,6 +503,7 @@ module.exports = {
     getAllDataInTable,
     getNbInterventionUndone,
     getListOfInterventionFromNotif,
+    getDechargeInfo,
     updateNotification,
     updateIntervention,
     updateInterventionFull,

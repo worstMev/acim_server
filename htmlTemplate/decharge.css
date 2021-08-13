@@ -1,0 +1,38 @@
+body{
+    padding : 60px;
+    display : flex;
+    flex-direction : column;
+    justify-content : space-between;
+}
+
+.header{
+    border : 1px solid black;
+    display : flex;
+    flex-direction : column;
+    justify-content : center;
+    align-items : center;
+}
+
+.info-tab{
+    display : flex;
+    border : 1px solid black;
+    justify-content : space-evenly;
+}
+
+.signature{
+   display : flex; 
+   flex-direction : row;
+   justify-content : space-between;
+}
+
+.signature div{
+   border : 1px solid black; 
+   width : 100%;
+   height : 200px;
+}
+.tech{
+    display : flex;
+    flex-direction : column;
+    justify-content : space-between;
+    align-items : center;
+}
