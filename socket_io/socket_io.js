@@ -9,6 +9,7 @@ function initSocketIO(httpServer){
             origin : 'http://localhost:3000',
         }
     });
+    const connectedUser = new Set();//set of num_user , must be unique
     const namespace_user = io.of('/user');
     const namespace_tech_main = io.of('/tech_main');
     //middleware
@@ -40,16 +41,62 @@ function initSocketIO(httpServer){
         socket.join(socket.type_user);
         //join the individual room
         socket.join(socket.num_user);
+        //join the connectedUser
+        connectedUser.add(socket.num_user);
         //check the rooms
         const socketInMyRoom = await io.in(socket.num_user).allSockets();
         const sockets_user = await io.in(User.USER.code).allSockets();
         const sockets_tech_main = await io.in(User.TECH_MAIN.code).allSockets();
         console.log( 'my room' , socketInMyRoom);
         console.log( 'user room' , sockets_user);
-        console.log( 'tech_main room' , sockets_tech_main);
+        console.log( 'tech_main room' , sockets_tech_main.entries());
 
-        socket.on('disconnect', () => {
+        let listConnectedUser = Array.from(connectedUser);
+        io.to(User.TECH_MAIN.code).emit('tech_main connected list -activeUsers' , listConnectedUser );
+
+        socket.on('disconnect', async () => {
+            let socketInRoom = await io.in(socket.num_user).allSockets();
+            if( socketInRoom.size < 1 ) {
+                connectedUser.delete(socket.num_user);
+                let listConnectedUser = Array.from(connectedUser);
+                io.to(User.TECH_MAIN.code).emit('tech_main connected list -activeUsers' , listConnectedUser );
+            }
             console.log(new Date().toLocaleString()+'--a user has disconnected -- username : '+socket.username);
+        });
+
+        socket.on('get list tech_main connected',async () => {
+            console.log('get list tech_main connected');
+            console.log('listConnectedUser',Array.from(connectedUser));
+            let listConnectedUser = Array.from(connectedUser);
+           
+            socket.emit('tech_main connected list -activeUsers' , listConnectedUser );
+        });
+
+        socket.on('send message' , async (message) => {
+            console.log('send message', message);
+            try{
+                const messages_sent = await database.sendMessage(message);
+                console.log('messages_sent',messages_sent);
+                for(const ms of messages_sent){
+                    let same = (ms.num_app_user_envoyeur === ms.num_app_user_recepteur);
+                    io.to(ms.num_app_user_envoyeur).emit('message sent -messageRoom',ms);
+                    if(!same) {
+                        io.to(ms.num_app_user_recepteur).emit('new message -messageRoom', ms);
+                        io.to(ms.num_app_user_recepteur).emit('new message -main', ms);
+                    }
+                }
+            }catch(err){
+                console.log('error in socket.on(send message)' , err);
+            }
+        });
+
+        socket.on('get messages', async (num_envoyeur , num_recepteur) => {
+            console.log('get messages ' , num_envoyeur , num_recepteur);
+
+            const messages = await database.getMessages(num_envoyeur , num_recepteur);
+            //console.log('messages' , messages);
+            socket.emit('messages -messageRoom' , messages);
+
         });
 
         socket.on( 'get problem definition' , async () => {
@@ -130,7 +177,7 @@ function initSocketIO(httpServer){
             console.log('add num_intervention to notif' , updatedNotif1 );
 
             //emit 'new intervention' to room 'tech_main'
-            io.to(User.TECH_MAIN.code).emit('new intervention');
+            io.to(User.TECH_MAIN.code).emit('new intervention' , newIntervention);
             //emit 'update notifs list unanswered'
             io.to(User.TECH_MAIN.code).emit('update notifs list unanswered');
             //emit 'notif from tech_main' to the room num_app_user_user
@@ -146,17 +193,17 @@ function initSocketIO(httpServer){
             if( notifsTab ) io.to(socket.num_user).emit('notifs history', notifsTab);
         });
 
-        socket.on('get intervention history', async (num_tech_main , date_debut , date_fin , statut) => {
-            console.log(new Date().toLocaleTimeString()+' socket.on(get intervention history)' , num_tech_main , date_debut , date_fin , statut);
+        socket.on('get intervention history', async (num_tech_main , date_debut , date_fin , statut,num_intervention_type, num_intervention) => {
+            console.log(new Date().toLocaleTimeString()+' socket.on(get intervention history)' , num_tech_main , date_debut , date_fin , statut,num_intervention_type, num_intervention);
             try{
                 const minDateProgramme = await database.getAggregate('view_intervention_full' , 'min(date_programme)');
                 if(!date_debut) date_debut = minDateProgramme.min;
                 
-                console.log(' socket.on(get intervention history)' , num_tech_main , date_debut , date_fin , statut);
-                const interventionList = await database.getListIntervention(num_tech_main,date_debut , date_fin , statut.done , statut.probleme_resolu);
+                console.log(' socket.on(get intervention history)' , num_tech_main , date_debut , date_fin , statut ,num_intervention_type, num_intervention);
+                const interventionList = await database.getListIntervention(num_tech_main,date_debut , date_fin , statut.done , statut.probleme_resolu, num_intervention_type ,num_intervention);
 
-                console.log('list Intervention' , interventionList  );
-                socket.emit('intervention history' , interventionList  );
+                //console.log('list Intervention' , interventionList  );
+                socket.emit('intervention history' , interventionList );
             }catch(err){
                 console.log('error in socket.on(get intervention history)',err);
             }
@@ -174,6 +221,8 @@ function initSocketIO(httpServer){
                 console.log('error in socket.on(get oldest intervention date)', err);
             }
         });
+
+        
 
         socket.on('get notifs list unanswered',async () => {
             console.log('get notifs list unanswered' );
@@ -212,8 +261,18 @@ function initSocketIO(httpServer){
             console.log('get tech_mains list');
             const tech_mainsList = await database.getAllDataInTable('view_app_user_tech_main');
             console.log('get tech_mains list' , tech_mainsList);
-            if(tech_mainsList) io.to(socket.num_user).emit('tech_mains list', tech_mainsList);
-            else console.log('no tech_mainsList in get tech_mains list');
+            if(tech_mainsList){
+                let num_receiver = socket.num_user;
+                for( const tech of tech_mainsList){
+                    tech.nbNewMessage = await database.getNbNewMessage(num_receiver, tech.num_user);
+                }
+                console.log('tech_mainsList +', tech_mainsList);
+                io.to(socket.num_user).emit('tech_mains list', tech_mainsList);
+
+                socket.emit('tech_mains list -activeUsers', tech_mainsList);
+            } else {
+                console.log('no tech_mainsList in get tech_mains list');
+            }
         });
 
         socket.on('get list intervention_notification' , async (num_user) => {
@@ -228,10 +287,61 @@ function initSocketIO(httpServer){
         socket.on('get intervention data' , async (num_intervention) => {
             console.log('get intervention data', num_intervention );
             const intervention = await database.checkInDatabase( 'view_intervention_full' , ['num_intervention'] , [num_intervention] );
+            
             if( intervention.found ) {
+                await database.getInterventionChildren(intervention.row);
                 console.log('intervention for num_intervention', intervention.row);
                 socket.emit('intervention data', intervention.row);
             }
+        });
+
+        socket.on('tech_main saw messages', async (seenMessages) => {
+            console.log('seenMessages' , seenMessages);
+            //seenMessages[{ id , to(username) , from , time_sent , sent , time_seen , seen}]
+            const receiverNum_user = socket.num_user;
+            //update app_user_recepteur_message : set date_reception to now;
+            const now = new Date().toISOString();
+            
+            try{
+                const updatedSeenMessages = [];
+                const sendersId = new Set();
+                for ( const ms of seenMessages ) {
+                    let setArray ={
+                        prop : ['date_reception'],
+                        value : [now],
+                    }
+                    let whereArray = {
+                        prop : ['num_message', 'num_app_user_recepteur'],
+                        value : [ ms.id , receiverNum_user],
+                    };
+                    let upMs = await database.updateTable('app_user_recepteur_message',setArray.prop ,setArray.value ,whereArray.prop , whereArray.value);
+                    //console.log('upMs',upMs);
+                    let newMs = await database.checkInDatabase('view_message_full',['num_message'],[upMs[0].num_message]);//return { found , row}
+                    //console.log('newMs',newMs);
+                    updatedSeenMessages.push(newMs.row);
+                    sendersId.add( newMs.row.num_app_user_envoyeur );
+                }
+                console.log('updatedSeenMessages' , updatedSeenMessages);
+                sendersId.forEach( id => io.to(id).emit('updateMessages -messageRoom', updatedSeenMessages));
+                io.to(socket.num_user).emit('updateMessages -messageRoom', updatedSeenMessages);
+            }catch(err){
+                console.log('error in socket.on(tech_main saw messages)', err);
+            }
+
+
+        });
+
+        socket.on('get nb new message' , async (num_user_receiver , num_user_sender = null) => {
+            console.log('get nb new message', num_user_receiver);
+            try{
+                const nbNewMessage = await database.getNbNewMessage(num_user_receiver, num_user_sender);
+                console.log('nbNewMessage' , nbNewMessage);
+                socket.emit('nb new message -main', nbNewMessage);
+
+            }catch(err){
+                console.log('error in socket.on(get nb new message)' , err);
+            }
+
         });
 
         socket.on('authenticate intervention tech_main',async(num_intervention , pwd) => {
@@ -258,6 +368,7 @@ function initSocketIO(httpServer){
             try{
                 let now = new Date().toISOString();
                 const updatedIntervention = await database.updateIntervention( ['date_debut'] , [now] ,['num_intervention'],[num_intervention]);
+                await database.getInterventionChildren(updatedIntervention);
                 socket.emit('started intervention', updatedIntervention );
             }catch(err){
                 console.log('error in socket.on(start intervention) ' , err);
@@ -276,12 +387,23 @@ function initSocketIO(httpServer){
                     date_debut = new Date(date_debut).toISOString();
                 }
                 const updatedIntervention = await database.updateIntervention( ['date_fin','done', 'probleme_resolu', 'date_debut' ] , [now,true, resolu, date_debut] ,['num_intervention'],[num_intervention]);
+                await database.getInterventionChildren(updatedIntervention);
                 socket.emit('ended intervention', updatedIntervention );
                 socket.emit('ended intervention interventionPage', updatedIntervention );
                 socket.to(User.TECH_MAIN.code).emit('ended intervention' ,updatedIntervention);
                 socket.to(User.TECH_MAIN.code).emit('ended intervention interventionPage' ,updatedIntervention);
             }catch(err){
                 console.log('error in socket.on(end intervention) ' , err);
+            }
+        });
+
+        socket.on('get intervention type', async () => {
+            try{
+
+                const intervention_types = await database.getAllDataInTable('intervention_type');
+                socket.emit('intervention_type list -interventionHistoryControl' , intervention_types);
+            }catch(err){
+                console.log('error in socket.on(get intervention type)',error);
             }
         });
 
@@ -295,8 +417,11 @@ function initSocketIO(httpServer){
                 const probleme_tech_s = await database.getAllDataInTable('probleme_tech_type');
                 socket.emit('intervention_type list' , intervention_types);
                 socket.emit('lieu list' , lieus);//this is the new norm full english , there's list lieu up there xD change it when you feel like it
+                socket.emit('lieu list -problemeTechConstate' , lieus);//this is the new norm full english , there's list lieu up there xD change it when you feel like it
                 socket.emit('materiel list' , materiels,materielTypes);
+                socket.emit('materiel list -materielSelector' , materiels,materielTypes);
                 socket.emit('probleme_tech_type list', probleme_tech_s);
+                socket.emit('probleme_tech_type list -problemeTechConstate', probleme_tech_s);
                 
             }catch(err){
                 console.log('error in socket.on(get intervention_type list)', err);
@@ -309,6 +434,7 @@ function initSocketIO(httpServer){
             try{
                 const probleme_tech_s = await database.getAllDataInTable('probleme_tech_type');
                 socket.emit('probleme_tech_type list', probleme_tech_s);
+                socket.emit('probleme_tech_type list -problemeTechConstate', probleme_tech_s);
             }catch(err){
                 console.log('error in socket.on(get probleme_tech_type list)', err);
             }
@@ -317,8 +443,9 @@ function initSocketIO(httpServer){
         socket.on('get lieu list' ,async () => {
             console.log('get lieu list');
             try{
-                const probleme_tech_s = await database.getAllDataInTable('lieu');
-                socket.emit('lieu list', probleme_tech_s);
+                const lieus = await database.getAllDataInTable('lieu');
+                socket.emit('lieu list', lieus);
+                socket.emit('lieu list -problemeTechConstate' , lieus);//this is the new norm full english , there's list lieu up there xD change it when you feel like it
             }catch(err){
                 console.log('error in socket.on(get lieu list)', err);
             }
@@ -329,13 +456,14 @@ function initSocketIO(httpServer){
                 const materielTypes = await database.getAllDataInTable('materiel_type');
                 const materiels = await database.getAllDataInTable('view_materiel');
                 socket.emit('materiel list' , materiels,materielTypes);
+                socket.emit('materiel list -materielSelector' , materiels,materielTypes);
             }catch(err){
                 console.log('error in socket.on(get materiel list)', err);
             }
         });
-        socket.on('create intervention' , async (num_intervention_type, code_intervention_type , num_lieu_intervention , date_programme , motif , num_materiel , num_probleme_tech_type) => {
+        socket.on('create intervention' , async (num_intervention_type, code_intervention_type , num_lieu_intervention , date_programme , motif , num_materiel , num_probleme_tech_type, num_intervention_pere) => {
             let num_app_user_tech_main_creator = socket.num_user;
-            let num_probeleme_tech = null;
+            let num_probleme_tech = null;
             let num_lieu_probleme_tech = num_lieu_intervention;
             console.log('create intervention with :', num_app_user_tech_main_creator , code_intervention_type , num_intervention_type , num_lieu_intervention , motif , date_programme , num_materiel);
             if( num_probleme_tech_type ) {
@@ -357,6 +485,20 @@ function initSocketIO(httpServer){
                     console.log('error in socket.on(create intervention) -- create problem', err);
                 }
             }
+            if( num_intervention_pere ) {
+                try{
+                    //check it in database 
+                    let intervention_pere = await database.checkInDatabase('intervention' , ['num_intervention'] , [num_intervention_pere] );
+                    if( !intervention_pere.found ) {
+                        num_intervention_pere = null;
+                        console.log(' false num_intervention_pere ');
+                    }
+                }catch(err){
+                    console.log('error in socket.on(create intervention) num_intervention_pere');
+                }
+            }else{
+                num_intervention_pere = null;
+            }
             let array = {
                 prop : [
                     'num_app_user_tech_main_creator',
@@ -366,6 +508,7 @@ function initSocketIO(httpServer){
                     'date_programme',
                     'num_materiel',
                     'num_probleme_constate',
+                    'num_intervention_pere',
                 ],
                 value : [
                     num_app_user_tech_main_creator,
@@ -375,13 +518,14 @@ function initSocketIO(httpServer){
                     date_programme,
                     num_materiel || null,
                     num_probleme_tech,
+                    num_intervention_pere,
                 ],
             }
             try{
                 const newIntervention = await database.createInterventionCustom( array.prop , array.value ); 
                 if( newIntervention ) {
                     console.log('intervention created ... send new Intervention');
-                    io.to(User.TECH_MAIN.code).emit('new intervention');
+                    io.to(User.TECH_MAIN.code).emit('new intervention', newIntervention);
                 }
             }catch(err){
                 console.log('error in socket.on(create intervention)' , err);
@@ -483,6 +627,7 @@ function initSocketIO(httpServer){
                 const updatedIntervention = await database.updateIntervention(array.setProp,array.setValue,array.whereProp,array.whereValue);
                 if(updatedIntervention) {
                     console.log( 'update intervention info probleme_tech',updatedIntervention);
+                    await database.getInterventionChildren(updatedIntervention);
                     socket.emit('intervention data',updatedIntervention);
                 }
 
@@ -512,6 +657,7 @@ function initSocketIO(httpServer){
                 const updatedIntervention = await database.updateIntervention(array.setProp,array.setValue,array.whereProp,array.whereValue);
                 if(updatedIntervention) {
                     console.log( 'update intervention info log ',updatedIntervention);
+                    await database.getInterventionChildren(updatedIntervention);
                     socket.emit('intervention data',updatedIntervention);
                 }
 
@@ -540,8 +686,10 @@ function initSocketIO(httpServer){
             try{
                 const updatedDecharge = await database.updateDecharge(array.setProp, array.setValue , array.whereProp , array.whereValue);
                 if(updatedDecharge){
-                    const intervention = await database.checkInDatabase('view_intervention_full',['num_intervention'],[num_intervention]) ;//return { found , row}
-                    socket.emit('intervention data', intervention.row);
+                    let intervention = await database.checkInDatabase('view_intervention_full',['num_intervention'],[num_intervention]) ;//return { found , row}
+                    intervention = intervention.row;
+                    await database.getInterventionChildren(intervention);
+                    socket.emit('intervention data', intervention);
                 }
             }catch(err){
                 console.log('error in socket.on(update decharge intervention)',err);
@@ -569,6 +717,7 @@ function initSocketIO(httpServer){
                 const updatedIntervention = await database.updateIntervention(array.setProp,array.setValue,array.whereProp,array.whereValue);
                 if(updatedIntervention) {
                     console.log( 'update intervention info num_materiel ',updatedIntervention);
+                    await database.getInterventionChildren(updatedIntervention);
                     socket.emit('intervention data',updatedIntervention);
                 }
 
@@ -628,6 +777,7 @@ function initSocketIO(httpServer){
                 const updatedIntervention = await database.updateIntervention(array.setProp,array.setValue,array.whereProp,array.whereValue);
                 if(updatedIntervention) {
                     console.log( 'update intervention info ',updatedIntervention);
+                    await database.getInterventionChildren(updatedIntervention);
                     socket.emit('intervention data',updatedIntervention);
                 }
 

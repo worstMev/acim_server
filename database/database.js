@@ -38,6 +38,8 @@ async function checkInDatabase(table , prop_array , value_array ){
 
     let isInTable = false;
     let data ;
+    //console.log(query_text);
+    //console.log(value_array);
 
     try{
         const { rows } = await pool.query(query_text,value_array);
@@ -88,6 +90,24 @@ async function getAggregate(table , aggr){
         if ( rows ) return rows[0];
     }catch(err){
         console.log('error in getAggregate', err);
+    }
+}
+
+async function getNbNewMessage(num_receiver , num_sender){
+    console.log('getNbNewMessage' , num_receiver , num_sender);
+    const query_text = `SELECT count(*) from view_message_full
+    WHERE date_reception is null
+    AND num_app_user_recepteur = $1
+    ${ (num_sender) ? 'AND num_app_user_envoyeur = $2': 'AND num_app_user_envoyeur IS NOT NULL' }`;
+    const value = (num_sender) ? [num_receiver, num_sender] : [num_receiver];
+    console.log('getNbNewMessage--', query_text);
+    console.log('getNbNewMessage--', value);
+    try{
+        const { rows } = await pool.query(query_text, value);
+        console.log('nbNewMessage' , rows);
+        if(rows) return rows[0].count;
+    }catch(err){
+        console.log('error in getNbNewMessage', err);
     }
 }
 
@@ -279,6 +299,30 @@ async function insertIntoTable ( table , arrayProp , valueProp ) {
     }
 }
 
+async function sendMessage(message){
+    //message { id , contenu ,num_sender , receivers : [num_receiver]}
+    //return an array of what we get from the view_message_full,
+    let newMessages = [];
+    try{
+        let array = {
+            prop : ['num_message' , 'num_app_user_envoyeur' , 'contenu_message' ],
+            value : [ message.id , message.num_sender , message.contenu ],
+        };
+        const newMessage = await insertIntoTable('message' , array.prop , array.value);
+        //insert in app_user_recepteur_message
+        for( const num_dest of message.receivers ){
+            array.prop = ['num_app_user_recepteur' , 'num_message' ];
+            array.value = [ num_dest , newMessage.num_message ];
+            const newMs = await insertIntoTable('app_user_recepteur_message', array.prop , array.value);
+            const newMsFull = await checkInDatabase('view_message_full',array.prop , array.value);
+            if (newMsFull.found) newMessages.push(newMsFull.row);
+        }
+        if (newMessages.length) return newMessages;
+    }catch(err){
+        console.log('error in database.sendMessage' ,err);
+    }
+}
+
 async function createInterventionCustom (arrayProp, valueProp){
     try{
         const newIntervention = await insertIntoTable('intervention', arrayProp , valueProp);
@@ -341,6 +385,7 @@ async function getListInterventionUndone(num_tech_main = null) {
     const query_text = `SELECT * from view_intervention_undone 
     WHERE ${whereClause}
     ORDER BY date_programme ASC`
+    console.log('getListInterventionUndone query' , query_text);
     try{
         const { rows } = await pool.query(query_text , arrayValue);
         if( rows ) return rows;
@@ -349,10 +394,12 @@ async function getListInterventionUndone(num_tech_main = null) {
     }
 }
 
-async function getDataInTable(table , arrayProp , arrayValue){
+async function getDataInTable(table , arrayProp , arrayValue , orderClause = null){
     const whereClause = arrayProp.map( (prop,index) => `${prop} = $${index+1}`).join(' AND ');
     const query_text = `SELECT * from ${table}
-    WHERE ${whereClause}`;
+    WHERE ${whereClause}
+    ${(orderClause) ? orderClause : ''}`;
+    console.log('query_text in getDataInTable', query_text , arrayValue);
     try{
         const {rows} = await pool.query(query_text , arrayValue); 
         if(rows) return rows;
@@ -362,7 +409,26 @@ async function getDataInTable(table , arrayProp , arrayValue){
     }
 }
 
-async function getListIntervention(num_tech_main , debut , fin , done , probleme_resolu){
+async function getMessages ( num_sender , num_receiver ){
+    let array = {
+        prop : ['num_app_user_envoyeur' , 'num_app_user_recepteur'],
+        value : [ num_sender , num_receiver ],
+    };
+    let same = (num_sender === num_receiver);
+    const query_text = `SELECT * from view_message_full
+    WHERE num_app_user_envoyeur = $1 AND num_app_user_recepteur = $2 
+    ${ (same)? '' : 'OR num_app_user_envoyeur = $2 AND num_app_user_recepteur = $1'}
+    ORDER BY date_envoie ASC`;
+    try{
+        const { rows } = await pool.query(query_text, array.value);
+        if(rows) return rows;
+        //if(rows) return rows;
+    }catch(err){
+        console.log('error in getMessages', err);
+    }
+}
+
+async function getListIntervention(num_tech_main , debut , fin , done , probleme_resolu,num_intervention_type,num_intervention){
         
     let whereClauseArray = [
         'num_app_user_tech_main_creator = ',
@@ -370,8 +436,10 @@ async function getListIntervention(num_tech_main , debut , fin , done , probleme
         'date_programme <= ',
         'done = ',
         'probleme_resolu =',
+        'num_intervention_type =',
+        'num_intervention::text LIKE ',
     ];
-    let arrayValue = [ num_tech_main , debut, fin , done ,probleme_resolu ];
+    let arrayValue = [ num_tech_main , debut, fin , done ,probleme_resolu, num_intervention_type,num_intervention ];
     let indexToSuppr = [];
     for( const [index,val] of arrayValue.entries()){
         console.log(index,val);
@@ -396,11 +464,44 @@ async function getListIntervention(num_tech_main , debut , fin , done , probleme
       
     try{
         const {rows} = await pool.query(query_text,arrayValue); 
+        //get all child of each intervention
+        const query_text_child = 'SELECT * from view_intervention_full where num_intervention_pere = $1';
+        for( const interv of rows ){
+            await getInterventionChildren(interv);
+            //console.log(`interv.children of ${interv.num_intervention}`, interv.children);
+        }
         if(rows) return rows;
     }catch(err){
         console.log('error in getListIntervention',err);
     }
     
+}
+
+async function getInterventionChildren(intervention){
+    //use of shallow copy xD
+    let {
+        num_intervention,
+    } = intervention;
+    //console.log('getInterventionChildren' ,num_intervention);
+    const query = 'SELECT * from view_intervention_full where num_intervention_pere = $1';
+
+    try{
+        const res = await pool.query(query , [num_intervention]);
+        if( res.rows.length > 0 ){
+            //console.log(`res.rows in getInterventionChildren --${num_intervention}`,res.rows);
+            intervention.children = res.rows;
+            for( const child of res.rows ) {
+                await getInterventionChildren(child);
+            }
+        } else {
+            //console.log(`res.rows in getInterventionChildren --${num_intervention}`,res.rows);
+            intervention.children = [];
+            //console.log(`res.rows from children in getInterventionChildren --${num_intervention}`, intervention.children);
+        }
+
+    }catch(err){
+        console.log('error in getInterventionChildren', err);
+    }
 }
 
 async function getNbInterventionUndone () {
@@ -426,6 +527,9 @@ async function getListOfInterventionFromNotif(num_user) {
         const result = await pool.query(query, value);
         //console.log('history ',result.rows);
         if( result.rows ){
+            for( const interv of result.rows ) {
+                await getInterventionChildren(interv);
+            }
             return result.rows;
         }
     }catch(err){
@@ -470,6 +574,7 @@ async function updateIntervention (setPropArray,setValueArray,wherePropArray, wh
         console.log('num_intervention', num_intervention);
         if (updatedInterventions){
             const updatedIntervention = await checkInDatabase('view_intervention_full',['num_intervention'],[num_intervention]) ;
+            await getInterventionChildren(updatedIntervention.row);
             console.log('updatedIntervention 1', updatedIntervention.row);
             return updatedIntervention.row;
 
@@ -504,6 +609,9 @@ module.exports = {
     getNbInterventionUndone,
     getListOfInterventionFromNotif,
     getDechargeInfo,
+    getNbNewMessage,
+    getInterventionChildren,
+    getMessages,
     updateNotification,
     updateIntervention,
     updateInterventionFull,
@@ -514,4 +622,6 @@ module.exports = {
     createProblemeTech,
     createDecharge,
     createDechargeMateriel,
+    sendMessage,
+    updateTable,
 }

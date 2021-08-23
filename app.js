@@ -18,6 +18,7 @@ const corsOption = {
 app.use(cors(corsOption));
 app.use(bodyParser.urlencoded({ extended : true }));
 app.use(bodyParser.json());
+//makes all routes unaccessible except /acim
 app.use(express.static(path.join(__dirname,'acim')));
 
 //initialize the socket_io
