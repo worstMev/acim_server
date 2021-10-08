@@ -63,6 +63,13 @@ function initSocketIO(httpServer){
             }
             console.log(new Date().toLocaleString()+'--a user has disconnected -- username : '+socket.username);
         });
+        
+        socket.on('disconnect all' ,async () => {
+            //disconnect all socket in room socket.num_user,
+            //send a disconnect to all socket except self
+            socket.to(socket.num_user).emit('you have to disconnect');
+
+        });
 
         socket.on('get list tech_main connected',async () => {
             console.log('get list tech_main connected');
@@ -90,6 +97,45 @@ function initSocketIO(httpServer){
             }
         });
 
+        socket.on('create annonce', async (annonce_id,num_tech_main_envoyeur,contenu) => {
+            console.log('create annonce' , annonce_id,num_tech_main_envoyeur , contenu);
+            try{
+                //check if tech_main or not but normally only a tech_main can send it
+                const tech_main = await database.checkInDatabase('view_app_user_full',['num_user', 'code'],[ num_tech_main_envoyeur , 'TECH_MAIN']);
+                if( tech_main.found ){
+                    //create the annonce
+                    const annonces = await database.createAnnonce(annonce_id,num_tech_main_envoyeur,contenu);
+                    console.log('annonces', annonces);
+                    if (annonces ) {
+                        io.emit('new annonce -annonceList' , annonces);
+                        io.emit('new annonce -main' , annonces);
+                        io.emit('new annonce -notify' , annonces);
+                    }
+                }
+
+            }catch(err){
+                console.log('error in socket.on(create annonce)' , err)
+            }
+        });
+
+        socket.on('get nb new annonce', async (num_user, component = null) => {
+            console.log('get nb new annonce ', num_user, component);
+            try{
+                const nbNewAnnonce = await database.getNbNewAnnonce(num_user);
+                if( component ){
+                    let _event = `nb new annonce -${component}`;
+                    socket.emit(_event, nbNewAnnonce);
+                }else{
+                    if ( nbNewAnnonce ){
+                        socket.emit('nb new annonce -main', nbNewAnnonce);
+                        socket.emit('nb new annonce -notify', nbNewAnnonce);
+                    }
+                }
+            }catch(err){
+                console.log('error in socket.on(get nb new annonce)', err);
+            }
+        });
+
         socket.on('get messages', async (num_envoyeur , num_recepteur) => {
             console.log('get messages ' , num_envoyeur , num_recepteur);
 
@@ -97,6 +143,16 @@ function initSocketIO(httpServer){
             //console.log('messages' , messages);
             socket.emit('messages -messageRoom' , messages);
 
+        });
+
+        socket.on('get annonce', async (num_app_user_recepteur) => {
+            console.log('get annonce');
+            try{
+                const annonces = await database.getAnnonces(num_app_user_recepteur);
+                socket.emit('annonces -annonceList' , annonces);
+            }catch(err){
+                console.log('error in socket.on(get annonce)', err);
+            }
         });
 
         socket.on( 'get problem definition' , async () => {
@@ -155,7 +211,7 @@ function initSocketIO(httpServer){
             let { probleme_type ,remarque , tech_main_username , date_envoie , lieu , num_lieu , user_sender_username , statut_libelle} = updatedNotif;
             console.log(`${tech_main_username} arrive pour le probleme ${probleme_type} notifie a ${new Date(date_envoie).toLocaleString('fr-FR')}.`);
             //create the intervention 
-            let motif = ` reponse a un notification de ${user_sender_username} , ${probleme_type} - ${lieu} - ${statut_libelle}`;
+            let motif = ` reponse a une notification de ${user_sender_username} , ${probleme_type} - ${lieu} - ${statut_libelle}`;
             let date_programme = new Date( now_date.getTime() + delai*60*1000 );
             let num_intervention_type = null;
             let code_intervention_type = 'REP_NOTIF';
@@ -176,13 +232,32 @@ function initSocketIO(httpServer){
             const updatedNotif1 = await database.updateNotification(['num_intervention'] , [ num_intervention ] , [ 'num_notification'] , [ num_notification ]);
             console.log('add num_intervention to notif' , updatedNotif1 );
 
+            const notifInfo = await database.checkInDatabase('view_notification_by_user_intervention',['num_notification'],[updatedNotif1.num_notification]);
+            
+
             //emit 'new intervention' to room 'tech_main'
             io.to(User.TECH_MAIN.code).emit('new intervention' , newIntervention);
             //emit 'update notifs list unanswered'
             io.to(User.TECH_MAIN.code).emit('update notifs list unanswered');
             //emit 'notif from tech_main' to the room num_app_user_user
-            io.to(updatedNotif1.num_app_user_user).emit('notif from tech_main', updatedNotif1 );
+            if(notifInfo.found){
+                io.to(updatedNotif1.num_app_user_user).emit('notif from tech_main', notifInfo.row );
+            }
 
+        });
+
+        socket.on('get notifs today' , async (today) => {
+            //arrives in UTC xD so if Extract day we might get bad stuff if local hour is 0h then UTC will be yesterday
+            console.log('get notifs today', today);
+            try{
+                const notifs = await database.getNotificationDay(today);
+                console.log('get notifs today' , notifs);
+                if(notifs) {
+                    socket.emit('notifs today -notifsList', notifs);
+                }
+            }catch(err){
+                console.log('error in socket.on(get notifs day)' , err);
+            }
         });
 
         socket.on('get notifs history',async (num_user) => {
@@ -204,6 +279,7 @@ function initSocketIO(httpServer){
 
                 //console.log('list Intervention' , interventionList  );
                 socket.emit('intervention history' , interventionList );
+                socket.emit('intervention history -myTask' , interventionList );
             }catch(err){
                 console.log('error in socket.on(get intervention history)',err);
             }
@@ -238,7 +314,42 @@ function initSocketIO(httpServer){
             console.log('get undone intervention' , num_tech_main);
             const arrayUndoneIntervention = await database.getListInterventionUndone(num_tech_main);
             //console.log('list undone intervention', arrayUndoneIntervention);
+            for( const interv of arrayUndoneIntervention ){
+                await database.getInterventionChildren(interv);
+            }
             socket.emit('list undone intervention' , arrayUndoneIntervention);
+            socket.emit('list undone intervention -myTask' , arrayUndoneIntervention);
+            socket.emit('list undone intervention -techActivityDisplay' , arrayUndoneIntervention);
+        });
+
+        socket.on('get pending intervention' , async (num_tech_main) =>{
+            console.log('get pending intervention' , num_tech_main);
+            try{
+                const pendingInterventions = await database.getListInterventionPending(num_tech_main);
+                console.log('pendingInterventions' , pendingInterventions);
+                //get children
+                for( const interv of pendingInterventions){
+                    await database.getInterventionChildren(interv);
+                }
+                socket.emit('pending intervention -techActivityDisplay', pendingInterventions);
+                socket.emit('pending intervention -myTask', pendingInterventions);
+            }catch(err){
+                console.log('error in socket.on(get pending intervention)', err);
+            }
+        });
+
+        socket.on('get done today intervention' , async (num_tech_main) =>{
+            console.log('get done today intervention', num_tech_main);
+            try{
+                const doneTodayInterventions = await database.getListInterventionDoneToday(num_tech_main);
+                console.log('doneTodayInterventions' , doneTodayInterventions);
+                for( const interv of doneTodayInterventions){
+                    await database.getInterventionChildren(interv);
+                }
+                socket.emit('done today intervention -techActivityDisplay', doneTodayInterventions);
+            }catch(err){
+                console.log('error in socket.on(get done today intervention)', err);
+            }
         });
 
         socket.on('get nb intervention undone' , async () => {
@@ -247,6 +358,13 @@ function initSocketIO(httpServer){
             console.log( 'nbInterventionUndone' , nbInterventionUndone);
             
             io.to(socket.num_user).emit('nb intervention undone' , nbInterventionUndone);
+        });
+
+        socket.on('get nb unanswered notifs' , async () => {
+            console.log('get nb unanswered notif');
+            const nbUnansweredNotif = await database.getNbNotificationUnanswered();
+            console.log('nbUnansweredNotif' , nbUnansweredNotif);
+            socket.emit('nb unanswered notifs -dashboard', nbUnansweredNotif);
         });
 
         socket.on('get users list' , async () => {
@@ -295,7 +413,7 @@ function initSocketIO(httpServer){
             }
         });
 
-        socket.on('tech_main saw messages', async (seenMessages) => {
+        socket.on('app_user saw messages', async (seenMessages) => {
             console.log('seenMessages' , seenMessages);
             //seenMessages[{ id , to(username) , from , time_sent , sent , time_seen , seen}]
             const receiverNum_user = socket.num_user;
@@ -310,22 +428,38 @@ function initSocketIO(httpServer){
                         prop : ['date_reception'],
                         value : [now],
                     }
+                    let num_message = ms.id || ms.num_message;
                     let whereArray = {
                         prop : ['num_message', 'num_app_user_recepteur'],
-                        value : [ ms.id , receiverNum_user],
+                        value : [ num_message , receiverNum_user],
                     };
                     let upMs = await database.updateTable('app_user_recepteur_message',setArray.prop ,setArray.value ,whereArray.prop , whereArray.value);
-                    //console.log('upMs',upMs);
-                    let newMs = await database.checkInDatabase('view_message_full',['num_message'],[upMs[0].num_message]);//return { found , row}
+                    console.log('upMs',upMs);
+                    let newMs;
+                    if( !ms.is_annonce ){
+                        newMs = await database.checkInDatabase('view_message_full',['num_message'],[upMs[0].num_message]);//return { found , row}
+                    }else{
+                        //annonce
+                        newMs = await database.checkInDatabase('view_annonce_recepteur_full', [ 'num_message' , 'num_app_user_recepteur'] ,[ upMs[0].num_message , receiverNum_user]);
+                    }
                     //console.log('newMs',newMs);
                     updatedSeenMessages.push(newMs.row);
                     sendersId.add( newMs.row.num_app_user_envoyeur );
                 }
                 console.log('updatedSeenMessages' , updatedSeenMessages);
+                //if one is_annonce then all is annonce
+                if( updatedSeenMessages[0].is_annonce ){
+                    sendersId.forEach( id => io.to(id).emit('updateAnnonce -annonceList', updatedSeenMessages));
+                    sendersId.forEach( id => io.to(id).emit('updateAnnonce -main', updatedSeenMessages));
+                    sendersId.forEach( id => io.to(id).emit('updateAnnonce -notify', updatedSeenMessages));
+                    io.to(socket.num_user).emit('updateAnnonce -annonceList');
+                    io.to(socket.num_user).emit('updateAnnonce -main');
+                    io.to(socket.num_user).emit('updateAnnonce -notify');
+                }
                 sendersId.forEach( id => io.to(id).emit('updateMessages -messageRoom', updatedSeenMessages));
                 io.to(socket.num_user).emit('updateMessages -messageRoom', updatedSeenMessages);
             }catch(err){
-                console.log('error in socket.on(tech_main saw messages)', err);
+                console.log('error in socket.on(user_app saw messages)', err);
             }
 
 
@@ -342,6 +476,35 @@ function initSocketIO(httpServer){
                 console.log('error in socket.on(get nb new message)' , err);
             }
 
+        });
+
+        socket.on('get date stats' , async ( date_debut , date_fin  ,num_tech_main) => {
+            console.log('get date', date_debut , date_fin , num_tech_main);
+            //get aggregate data for a day
+            try{
+                const statsDates = await database.getStatsDates(date_debut, date_fin , num_tech_main);
+                socket.emit('date stats -agendaTimeline', statsDates)
+                
+            }catch(err){
+                console.log('error in socket.on(get date)', err);
+            }
+            
+        });
+
+        socket.on('get agenda' , async (date_debut , date_fin , num_tech_main,id= null) => {
+            console.log('get agenda' , date_debut ,date_fin , num_tech_main);
+            //date_debut = new Date(date_debut).toISOString();
+            //hour doesn't count as we use ::date in sql query 
+            //look for the function instead if bug
+            try{
+                const dataByDay = await database.getAgenda(date_debut,date_fin,num_tech_main);
+                console.log('dataByDay' , dataByDay);
+                socket.emit('agenda -agenda', dataByDay);
+                socket.emit('agenda -interventionTimeline' , dataByDay);
+                if(id) socket.emit('agenda -interventionTimeline -'+id , dataByDay);
+            }catch(err){
+                console.log('error in socket.on(get agenda)',err);
+            }
         });
 
         socket.on('authenticate intervention tech_main',async(num_intervention , pwd) => {
@@ -370,6 +533,7 @@ function initSocketIO(httpServer){
                 const updatedIntervention = await database.updateIntervention( ['date_debut'] , [now] ,['num_intervention'],[num_intervention]);
                 await database.getInterventionChildren(updatedIntervention);
                 socket.emit('started intervention', updatedIntervention );
+                socket.emit('started intervention -techActivity', updatedIntervention );
             }catch(err){
                 console.log('error in socket.on(start intervention) ' , err);
             }
@@ -390,6 +554,7 @@ function initSocketIO(httpServer){
                 await database.getInterventionChildren(updatedIntervention);
                 socket.emit('ended intervention', updatedIntervention );
                 socket.emit('ended intervention interventionPage', updatedIntervention );
+                socket.emit('ended intervention -techActivity', updatedIntervention);
                 socket.to(User.TECH_MAIN.code).emit('ended intervention' ,updatedIntervention);
                 socket.to(User.TECH_MAIN.code).emit('ended intervention interventionPage' ,updatedIntervention);
             }catch(err){
@@ -408,19 +573,23 @@ function initSocketIO(httpServer){
         });
 
         socket.on('get intervention definition', async () => {
-            console.log('get intervention_type list');
+            console.log('get intervention definition');
             try{
                 const intervention_types = await database.getAllDataInTable('intervention_type');
                 const lieus = await database.getAllDataInTable('lieu');
                 const materielTypes = await database.getAllDataInTable('materiel_type');
-                const materiels = await database.getAllDataInTable('view_materiel');
+                const materiels = await database.getAllDataInTable('view_materiel_full');
                 const probleme_tech_s = await database.getAllDataInTable('probleme_tech_type');
                 socket.emit('intervention_type list' , intervention_types);
+                socket.emit('intervention_type list -createIntervention' , intervention_types);
                 socket.emit('lieu list' , lieus);//this is the new norm full english , there's list lieu up there xD change it when you feel like it
+                socket.emit('lieu list -createIntervention' , lieus);//this is the new norm full english , there's list lieu up there xD change it when you feel like it
                 socket.emit('lieu list -problemeTechConstate' , lieus);//this is the new norm full english , there's list lieu up there xD change it when you feel like it
                 socket.emit('materiel list' , materiels,materielTypes);
-                socket.emit('materiel list -materielSelector' , materiels,materielTypes);
+                socket.emit('materiel list -createIntervention' , materiels,materielTypes,lieus);
+                socket.emit('materiel list -materielSelector' , materiels,materielTypes, lieus);
                 socket.emit('probleme_tech_type list', probleme_tech_s);
+                socket.emit('probleme_tech_type list -createIntervention', probleme_tech_s);
                 socket.emit('probleme_tech_type list -problemeTechConstate', probleme_tech_s);
                 
             }catch(err){
@@ -454,18 +623,47 @@ function initSocketIO(httpServer){
             console.log('get materiel list');
             try{
                 const materielTypes = await database.getAllDataInTable('materiel_type');
-                const materiels = await database.getAllDataInTable('view_materiel');
+                const lieus = await database.getAllDataInTable('lieu');
+                const materiels = await database.getAllDataInTable('view_materiel_full');
                 socket.emit('materiel list' , materiels,materielTypes);
-                socket.emit('materiel list -materielSelector' , materiels,materielTypes);
+                socket.emit('materiel list -materielSelector' , materiels,materielTypes,lieus);
             }catch(err){
                 console.log('error in socket.on(get materiel list)', err);
             }
         });
-        socket.on('create intervention' , async (num_intervention_type, code_intervention_type , num_lieu_intervention , date_programme , motif , num_materiel , num_probleme_tech_type, num_intervention_pere) => {
+        
+        socket.on('create intervention_type' , async (libelle, code, component = '') => {
+            console.log('create intervention_type');
+            try{
+                let newInterventionType = await database.createInterventionType(libelle , code);
+                if(newInterventionType.num_intervention_type){
+                    io.to(User.TECH_MAIN.code).emit('new intervention_type -'+component, newInterventionType);
+                    io.to(User.TECH_MAIN.code).emit('new intervention_type -createIntervention', newInterventionType);
+                }
+
+            }catch(err){
+                console.log('error in socket.on(create intervention_type)' ,err);
+            }
+        });
+
+        socket.on('create probleme_tech_type' , async (libelle , component = '') => {
+            console.log('create probleme_tech_type');
+            try{
+                let newProblemeTechType = await database.createProblemeTechType(libelle);
+                if( newProblemeTechType.num_probleme_tech_type ) {
+                    io.to(User.TECH_MAIN.code).emit('new probleme_tech_type -'+component, newProblemeTechType);
+                    io.to(User.TECH_MAIN.code).emit('new probleme_tech_type -createIntervention', newProblemeTechType);
+                }
+            }catch(err){
+                console.log('error in socket.on(create probleme_tech_type) ', err);
+            }
+        });
+
+        socket.on('create intervention' , async (num_intervention_type, code_intervention_type , num_lieu_intervention , date_programme , motif , num_materiel , num_probleme_tech_type, num_intervention_pere, commentaire) => {
             let num_app_user_tech_main_creator = socket.num_user;
             let num_probleme_tech = null;
             let num_lieu_probleme_tech = num_lieu_intervention;
-            console.log('create intervention with :', num_app_user_tech_main_creator , code_intervention_type , num_intervention_type , num_lieu_intervention , motif , date_programme , num_materiel);
+            console.log('create intervention with :', num_app_user_tech_main_creator , code_intervention_type , num_intervention_type , num_lieu_intervention , motif , date_programme , num_materiel , commentaire);
             if( num_probleme_tech_type ) {
                 //create a probleme
                 try{
@@ -509,6 +707,7 @@ function initSocketIO(httpServer){
                     'num_materiel',
                     'num_probleme_constate',
                     'num_intervention_pere',
+                    'commentaire',
                 ],
                 value : [
                     num_app_user_tech_main_creator,
@@ -519,6 +718,7 @@ function initSocketIO(httpServer){
                     num_materiel || null,
                     num_probleme_tech,
                     num_intervention_pere,
+                    commentaire,
                 ],
             }
             try{
@@ -526,6 +726,7 @@ function initSocketIO(httpServer){
                 if( newIntervention ) {
                     console.log('intervention created ... send new Intervention');
                     io.to(User.TECH_MAIN.code).emit('new intervention', newIntervention);
+                    io.to(User.TECH_MAIN.code).emit('new intervention -createIntervention', newIntervention);
                 }
             }catch(err){
                 console.log('error in socket.on(create intervention)' , err);
@@ -629,6 +830,7 @@ function initSocketIO(httpServer){
                     console.log( 'update intervention info probleme_tech',updatedIntervention);
                     await database.getInterventionChildren(updatedIntervention);
                     socket.emit('intervention data',updatedIntervention);
+                    socket.emit('intervention data -toDoList');
                 }
 
             }catch(err){

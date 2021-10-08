@@ -17,7 +17,7 @@ async function getAllDataInTable (table) {
     const query_text = `SELECT * FROM ${table} ;`;
     try{
         const { rows } = await pool.query(query_text);
-        console.log('all data in table' , rows );
+        //console.log('all data in table' , rows );
         if(rows){
             return rows;
         }
@@ -90,6 +90,18 @@ async function getAggregate(table , aggr){
         if ( rows ) return rows[0];
     }catch(err){
         console.log('error in getAggregate', err);
+    }
+}
+
+async function getNbNewAnnonce(num_user){
+    const query = `SELECT count(*) from view_annonce_recepteur_full
+    WHERE date_reception is null
+    AND num_app_user_recepteur = $1 ;`;
+    try{
+        const { rows } = await pool.query(query, [num_user]);
+        if (rows) return rows[0].count;
+    }catch(err){
+        console.log('error in getNbNewAnnonce', err);
     }
 }
 
@@ -177,6 +189,17 @@ async function createNotif({num_app_user_user,newProblem}) {
     }
 }
 
+async function getNotificationDay(day){
+    console.log('getNotificationDay');
+    const query_text = `SELECT * from get_notification_by_day($1::date);`
+    const value = [ day ];//day must be yyyy-mm-dd and local time
+    try{
+        const { rows } = await pool.query(query_text,value);
+        if(rows) return rows;
+    }catch(err){
+        console.log('error in getNotificationDay: ',err);
+    }
+}
 async function getNotification(arrayProp,arrayVal){
     let prop_text = arrayProp.map( (item,index) => `${item} = $${index +1}`).join(' AND ');
 
@@ -197,7 +220,7 @@ async function getNotification(arrayProp,arrayVal){
 }
 
 async function getHistoryNotificationForUser(num_user){
-    const query = `SELECT * FROM view_notification_by_user 
+    const query = `SELECT * FROM view_notification_full 
     ${(num_user) ? 'WHERE num_app_user_user = $1' : ''} 
     ORDER BY date_envoie DESC`;
     const value = (num_user) ? [ num_user ] : [];
@@ -224,6 +247,19 @@ async function getListNotificationUnanswered(){
         }
     }catch(err){
         console.log('problem in getListNotificationUnanswered' , err);
+    }
+}
+
+async function getNbNotificationUnanswered() {
+    const query = `SELECT count(*) FROM view_notification_by_user
+                    WHERE num_app_user_tech_main IS NULL;`;
+    try{
+        const { rows } = await pool.query(query);
+        if( rows ){
+            return rows[0].count;
+        }
+    }catch(err){
+        console.log('error in getNbNotificationUnanswered', err);
     }
 }
 
@@ -296,6 +332,56 @@ async function insertIntoTable ( table , arrayProp , valueProp ) {
         if( rows ) return rows[0];
     }catch(err){
         console.log('error in insert table :'+table+ '--', err);
+    }
+}
+
+async function createAnnonce(id,num_envoyeur, contenu){
+    console.log('database create annonce', id,num_envoyeur , contenu);
+    try{
+        let array = {
+            prop : ['num_message' , 'num_app_user_envoyeur' , 'contenu_message', 'is_annonce' ],
+            value : [ id , num_envoyeur , contenu , true],
+        };
+        let newAnnonce = await insertIntoTable('message', array.prop , array.value);
+        //console.log('newAnnonce', newAnnonce);
+        //insert in app_user_recepteur_message for all app_users
+        const query_broadcast = `SELECT * from broadcast_message($1);`;
+        const { rows } = await pool.query(query_broadcast,[  newAnnonce.num_message ]);
+        
+        newAnnonce = await checkInDatabase('view_annonce_full',['num_message'],[newAnnonce.num_message]);
+        if( rows && newAnnonce.found ){
+            return newAnnonce.row;
+        }
+    }catch(err){
+        console.log('error in createAnnonce', err);
+    }
+}
+
+async function createInterventionType(libelle, code){
+    console.log('createInterventionType' , libelle ,code);
+    try{
+        let newInterventionType = await insertIntoTable('intervention_type', ['libelle_intervention_type','code_intervention_type'],[libelle, code]);
+        if( newInterventionType.num_intervention_type ) {
+            return newInterventionType;
+        }else{
+            throw `createInterventionType failed for ${libelle}--${code}`;
+        }
+    }catch(err){
+        console.log('error in createInterventionType' , err);
+    }
+}
+
+async function createProblemeTechType(libelle){
+    console.log('createProblemeTechType' , libelle );
+    try{
+        let newProblemeTechType = await insertIntoTable('probleme_tech_type', ['libelle_probleme_tech_type'],[libelle]);
+        if( newProblemeTechType.num_probleme_tech_type ) {
+            return newProblemeTechType;
+        }else{
+            throw `createProblemeTechType failed for ${libelle}`;
+        }
+    }catch(err){
+        console.log('error in createProblemeTechType' , err);
     }
 }
 
@@ -394,6 +480,52 @@ async function getListInterventionUndone(num_tech_main = null) {
     }
 }
 
+async function getListInterventionPending( num_tech_main = null){
+    let whereClause;
+    let arrayValue;
+    if(num_tech_main){
+        whereClause = ` num_app_user_tech_main_creator = $1 `;
+        arrayValue = [ num_tech_main ];
+    }else{
+        whereClause = ' num_app_user_tech_main_creator IS NOT NUll ';
+    }
+    
+
+    const query_text = `SELECT * from view_intervention_started 
+    WHERE ${whereClause}
+    ORDER BY date_programme ASC`
+    console.log('getListInterventionPending query' , query_text);
+    try{
+        const { rows } = await pool.query(query_text , arrayValue);
+        if( rows ) return rows;
+    }catch(err){
+        console.log('error in getListInterventionPending' , err);
+    }
+}
+
+async function getListInterventionDoneToday ( num_tech_main = null ){
+    let whereClause;
+    let arrayValue;
+    if(num_tech_main){
+        whereClause = ` num_app_user_tech_main_creator = $1 `;
+        arrayValue = [ num_tech_main ];
+    }else{
+        whereClause = ' num_app_user_tech_main_creator IS NOT NUll ';
+    }
+    
+
+    const query_text = `SELECT * from view_intervention_done_today 
+    WHERE ${whereClause}
+    ORDER BY date_programme ASC`
+    console.log('getListInterventionDoneToday query' , query_text);
+    try{
+        const { rows } = await pool.query(query_text , arrayValue);
+        if( rows ) return rows;
+    }catch(err){
+        console.log('error in getListInterventionDoneToday' , err);
+    }
+}
+
 async function getDataInTable(table , arrayProp , arrayValue , orderClause = null){
     const whereClause = arrayProp.map( (prop,index) => `${prop} = $${index+1}`).join(' AND ');
     const query_text = `SELECT * from ${table}
@@ -407,6 +539,22 @@ async function getDataInTable(table , arrayProp , arrayValue , orderClause = nul
     }catch(err){
         console.log('error in getDataInTable',table, err);
     }
+}
+
+async function getAnnonces(num_recepteur) {
+    //get message ( is_annonce = true ) , 7 last days , today - 7 j
+    const query = `SELECT * FROM view_annonce_recepteur_full
+    WHERE num_app_user_recepteur = $1 
+    ORDER BY date_envoie DESC
+    LIMIT 15;`
+    try{
+        const { rows } = await pool.query(query, [num_recepteur]);
+        console.log('getAnnonces' , rows);
+        if(rows) return rows;
+    }catch(err){
+        console.log('error in getAnnonces', err);
+    }
+    
 }
 
 async function getMessages ( num_sender , num_receiver ){
@@ -425,6 +573,26 @@ async function getMessages ( num_sender , num_receiver ){
         //if(rows) return rows;
     }catch(err){
         console.log('error in getMessages', err);
+    }
+}
+
+async function getListInterventionForReport(num_tech_main, debut , fin ){
+    //debut and fin are in local
+    //db in UTC so local - 3
+    //toutes interventions debuté entre debut et fin
+    const query_text = `select * from view_intervention_full
+WHERE num_app_user_tech_main_creator = $1
+AND date_debut >= $2::date+ time '00:00' - time '03:00'
+AND date_debut <= $3::date+ time '23:59' - time '03:00'
+ORDER BY date_debut ASC`;
+    let values = [ num_tech_main, debut , fin];
+    try{
+        const { rows } = await pool.query(query_text,values);
+        if(rows){
+            return rows;
+        }
+    }catch(err){
+        console.log('error in getListInterventionForReport ', err);
     }
 }
 
@@ -465,7 +633,6 @@ async function getListIntervention(num_tech_main , debut , fin , done , probleme
     try{
         const {rows} = await pool.query(query_text,arrayValue); 
         //get all child of each intervention
-        const query_text_child = 'SELECT * from view_intervention_full where num_intervention_pere = $1';
         for( const interv of rows ){
             await getInterventionChildren(interv);
             //console.log(`interv.children of ${interv.num_intervention}`, interv.children);
@@ -593,25 +760,104 @@ async function updateDecharge(setPropArray,setValueArray,wherePropArray, whereVa
     }
 }
 
+async function getStatsDates(debut, fin , num_tech_main){
+    try{
+        //generate the dates from debut to fin
+        console.log(debut, fin, num_tech_main);
+        const query_date = `SELECT j::date from generate_series( $1::date , $2::date , '1 day' ::interval) as j;`;
+        const { rows } = await pool.query(query_date, [debut , fin ]);
+        if(rows){
+            console.log('getStatsDates', rows);
+            const datesLocales = rows.map( item => new Date(item.j).toLocaleDateString('fr-FR'));
+            const statsPerDate = [];
+
+            for( const date of datesLocales){
+                const query_stats = `SELECT count(*) as nb_intervention from get_intervention_by_day($1) WHERE num_app_user_tech_main_creator = $2`;
+                const val = [ date , num_tech_main ];
+                const { rows } = await pool.query(query_stats, val);
+                if(rows){
+                    statsPerDate.push({
+                        date : date,
+                        stats : rows[0],
+                    });
+                }
+            }
+            console.log('statsPerDate', statsPerDate);
+            return statsPerDate;
+           
+        }
+    }catch(err){
+        console.log('error in getStatsDates', err);
+    }
+}
+
+async function getAgenda(debut , fin , num_tech_main){
+    try{
+        //get all date from debut to fin
+        console.log(debut ,fin ,num_tech_main);
+        const query_date = `SELECT j::date from generate_series( $1::date , $2::date , '1 day' ::interval) as j;`;
+        const { rows } = await pool.query(query_date, [debut , fin ]);
+        if(rows){
+            console.log('getAgenda dates' , rows);
+            //in db it's UTC , so must use UTC for comparission
+            //const dates = rows.map( item => item.j );
+            const datesLocales= rows.map( item => new Date(item.j).toLocaleDateString('fr-FR') );
+            console.log('getAgenda datesLocales +', datesLocales);
+            const intervPerDate = [];
+            for( const date of datesLocales){
+                const query_day = `SELECT * from get_intervention_by_day($1)
+                WHERE num_app_user_tech_main_creator = $2;`
+                const { rows } = await pool.query(query_day,[date, num_tech_main]);
+                if(rows){
+                    intervPerDate.push({
+                        date,
+                        intervList : rows,
+                    });
+                }
+            }
+            console.log('intervPerDate' , intervPerDate);
+            return intervPerDate;
+        }
+        
+
+    }catch(err){
+        console.log('error in getAgenda', err);
+    }
+}
+
+
+
 module.exports = {
     checkInDatabase,
     checkCredentials,
+    createAnnonce,
+    createInterventionType,
+    createProblemeTechType,
+    getStatsDates,
     getAggregate,
+    getAgenda,
+    getAnnonces,
     getListProblem ,
     getListLieu,
     getListProblemeStatut,
+    getListInterventionForReport,
     getNotification,
     getHistoryNotificationForUser,
     getListNotificationUnanswered,
     getListInterventionUndone,
+    getListInterventionPending,
+    getListInterventionDoneToday,
     getListIntervention,
     getAllDataInTable,
     getNbInterventionUndone,
+    getNbNewAnnonce,
     getListOfInterventionFromNotif,
     getDechargeInfo,
     getNbNewMessage,
     getInterventionChildren,
+    getNotificationDay,
     getMessages,
+    getNbNotificationUnanswered,
     updateNotification,
     updateIntervention,
     updateInterventionFull,

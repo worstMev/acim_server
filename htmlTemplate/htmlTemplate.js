@@ -48,31 +48,33 @@ const dechargeTemplate = (decharge) => {
               </style>
             </head>
             <body>
-                <div class="header">
-                    <p> MPTDN </p>
-                    <p> DSIST </p>
-                </div>
-                <h1> Décharge de matériels pour maintenance </h1>
-                <p> Decharge ID : ${num_decharge}</p>
-                <div class="info">
-                    <p> Du : ${date_debut} </p>
-                    <p> Au : ${date_fin} </p>
-                    <p> Faite par : ${tech_main_username} </p>
-                    <p> Pour le${(materiels.length > 1) ? 's' : ''} matériel${(materiels.length > 1) ? 's' : ''}: </p>
-                    ${tab_elements}
-                </div>
-                 Signature :
-                <div class="signature">
-                    <div class="tech">
-                        <p> Propriétaire </p>
-                        <p> Pseudonyme dans acim : </p>
+                <div class="myDiv">
+                    <div class="header">
+                        <p> MNDPT </p>
+                        <p> DSI </p>
                     </div>
-                    <div class="tech">
-                        <p> Technicien </p>
-                        <p> Pseudonyme dans acim : ${tech_main_username} </p>
+                    <h1> Décharge de matériels pour maintenance </h1>
+                    <p> Decharge ID : ${num_decharge}</p>
+                    <div class="info myDiv">
+                        <p> Du : ${date_debut} </p>
+                        <p> Au : ${date_fin} </p>
+                        <p> Faite par : ${tech_main_username} </p>
+                        <p> Pour le${(materiels.length > 1) ? 's' : ''} matériel${(materiels.length > 1) ? 's' : ''}: </p>
+                        ${tab_elements}
                     </div>
+                     Signature :
+                    <div class="signature ">
+                        <div class="tech">
+                            <p> Propriétaire </p>
+                            <p> Pseudonyme dans acim : </p>
+                        </div>
+                        <div class="tech">
+                            <p> Technicien </p>
+                            <p> Pseudonyme dans acim : ${tech_main_username} </p>
+                        </div>
+                    </div>
+                    <p> Imprimer le ${new Date().toLocaleString()}. </p>
                 </div>
-                <p> Faite le ${new Date().toLocaleString()}. </p>
             </body>
         </html>
     `);

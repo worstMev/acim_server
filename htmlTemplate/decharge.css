@@ -1,8 +1,9 @@
 body{
     padding : 60px;
-    display : flex;
     flex-direction : column;
     justify-content : space-between;
+    display : block;
+    border : 1px solid green;
 }
 
 .header{
@@ -11,6 +12,8 @@ body{
     flex-direction : column;
     justify-content : center;
     align-items : center;
+}
+.info{
 }
 
 .info-tab{
@@ -35,4 +38,11 @@ body{
     flex-direction : column;
     justify-content : space-between;
     align-items : center;
+}
+
+@media print{
+    .myDiv{
+        page-break-after : auto;
+        page-break-inside : avoid;
+    }
 }
