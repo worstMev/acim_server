@@ -9,6 +9,7 @@ const Socket_io     = require('./socket_io/socket_io.js');
 const GeneratePdf   = require('./generatePdf/generate.js');
 const GenerateDocx  = require('./generateDocx/generate.js');
 const template      = require('./htmlTemplate/htmlTemplate.js');
+const peerServer    = require('./peerServer');
 
 const PORT = 3500;
 const corsOption = {
@@ -27,6 +28,9 @@ app.use(express.static(path.join(__dirname,'acim')));
 Socket_io.initSocketIO(httpServer);
 
 app.get('/acim*' , (req,res) => {
+    res.sendFile(path.join(__dirname,'acim/index.html'));
+});
+app.get('/notify*' , (req,res) => {
     res.sendFile(path.join(__dirname,'acim/index.html'));
 });
 
@@ -135,5 +139,5 @@ app.get('/rapportActivite/acim/:num_tech_main/:debut/:fin' , async (req,res) => 
 });
 
 
-
+peerServer.launchServer();
 httpServer.listen(PORT, () => console.log(`server started on ${PORT}`));

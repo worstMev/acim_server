@@ -191,7 +191,7 @@ async function createNotif({num_app_user_user,newProblem}) {
 
 async function getNotificationDay(day){
     console.log('getNotificationDay');
-    const query_text = `SELECT * from get_notification_by_day($1::date);`
+    const query_text = `SELECT * from get_notification_by_day($1::date) ORDER BY date_envoie DESC;`
     const value = [ day ];//day must be yyyy-mm-dd and local time
     try{
         const { rows } = await pool.query(query_text,value);
@@ -477,6 +477,29 @@ async function getListInterventionUndone(num_tech_main = null) {
         if( rows ) return rows;
     }catch(err){
         console.log('error in getListInterventionUndone' , err);
+    }
+}
+
+async function getNbInterventionUndoneForTechMain(num_tech_main = null){
+    let whereClause;
+    let arrayValue;
+    if(num_tech_main){
+        whereClause = ` num_app_user_tech_main_creator = $1 `;
+        arrayValue = [ num_tech_main ];
+    }else{
+        whereClause = ' num_app_user_tech_main_creator IS NOT NUll ';
+    }
+    
+
+    const query_text = `SELECT count(*) from view_intervention_undone 
+    WHERE ${whereClause};`;
+    console.log('getNbInterventionUndoneForTechMain query' , query_text);
+    try{
+        const { rows } = await pool.query(query_text , arrayValue);
+        console.log('getNbInterventionUndoneForTechMain ', rows);
+        if( rows ) return rows[0].count;
+    }catch(err){
+        console.log('error in getNbInterventionUndoneForTechMain' , err);
     }
 }
 
@@ -845,6 +868,7 @@ module.exports = {
     getHistoryNotificationForUser,
     getListNotificationUnanswered,
     getListInterventionUndone,
+    getNbInterventionUndoneForTechMain,
     getListInterventionPending,
     getListInterventionDoneToday,
     getListIntervention,

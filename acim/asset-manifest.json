@@ -1,26 +1,28 @@
 {
   "files": {
-    "main.css": "/static/css/main.d76618a7.chunk.css",
-    "main.js": "/static/js/main.111d6f8f.chunk.js",
-    "main.js.map": "/static/js/main.111d6f8f.chunk.js.map",
-    "runtime-main.js": "/static/js/runtime-main.1c4d55b7.js",
-    "runtime-main.js.map": "/static/js/runtime-main.1c4d55b7.js.map",
-    "static/js/2.49951932.chunk.js": "/static/js/2.49951932.chunk.js",
-    "static/js/2.49951932.chunk.js.map": "/static/js/2.49951932.chunk.js.map",
-    "static/js/3.df0a2577.chunk.js": "/static/js/3.df0a2577.chunk.js",
-    "static/js/3.df0a2577.chunk.js.map": "/static/js/3.df0a2577.chunk.js.map",
+    "main.css": "/static/css/main.6bc00555.chunk.css",
+    "main.js": "/static/js/main.01371e30.chunk.js",
+    "main.js.map": "/static/js/main.01371e30.chunk.js.map",
+    "runtime-main.js": "/static/js/runtime-main.943e2be1.js",
+    "runtime-main.js.map": "/static/js/runtime-main.943e2be1.js.map",
+    "static/js/2.3e8d909a.chunk.js": "/static/js/2.3e8d909a.chunk.js",
+    "static/js/2.3e8d909a.chunk.js.map": "/static/js/2.3e8d909a.chunk.js.map",
+    "static/js/3.67171c26.chunk.js": "/static/js/3.67171c26.chunk.js",
+    "static/js/3.67171c26.chunk.js.map": "/static/js/3.67171c26.chunk.js.map",
     "index.html": "/index.html",
-    "static/css/main.d76618a7.chunk.css.map": "/static/css/main.d76618a7.chunk.css.map",
-    "static/js/2.49951932.chunk.js.LICENSE.txt": "/static/js/2.49951932.chunk.js.LICENSE.txt",
+    "static/css/main.6bc00555.chunk.css.map": "/static/css/main.6bc00555.chunk.css.map",
+    "static/js/2.3e8d909a.chunk.js.LICENSE.txt": "/static/js/2.3e8d909a.chunk.js.LICENSE.txt",
+    "static/media/base_logo_4.55dfbd35.png": "/static/media/base_logo_4.55dfbd35.png",
     "static/media/base_logo_sans_texte_2.014a3326.png": "/static/media/base_logo_sans_texte_2.014a3326.png",
     "static/media/correct_notif.a673b70c.wav": "/static/media/correct_notif.a673b70c.wav",
     "static/media/flute_notif.df9fcaa1.wav": "/static/media/flute_notif.df9fcaa1.wav",
-    "static/media/notif1.47150c61.wav": "/static/media/notif1.47150c61.wav"
+    "static/media/notif1.47150c61.wav": "/static/media/notif1.47150c61.wav",
+    "static/media/ringtone.8c85869d.wav": "/static/media/ringtone.8c85869d.wav"
   },
   "entrypoints": [
-    "static/js/runtime-main.1c4d55b7.js",
-    "static/js/2.49951932.chunk.js",
-    "static/css/main.d76618a7.chunk.css",
-    "static/js/main.111d6f8f.chunk.js"
+    "static/js/runtime-main.943e2be1.js",
+    "static/js/2.3e8d909a.chunk.js",
+    "static/css/main.6bc00555.chunk.css",
+    "static/js/main.01371e30.chunk.js"
   ]
 }

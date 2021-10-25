@@ -10,6 +10,7 @@ function initSocketIO(httpServer){
         }
     });
     const connectedUser = new Set();//set of num_user , must be unique
+    let connectedUserPeerId = []; //[{num_user : [ peerId ]}]
     const namespace_user = io.of('/user');
     const namespace_tech_main = io.of('/tech_main');
     //middleware
@@ -52,14 +53,50 @@ function initSocketIO(httpServer){
         console.log( 'tech_main room' , sockets_tech_main.entries());
 
         let listConnectedUser = Array.from(connectedUser);
+        //all users , even no tech_main are in connectedUser , don't change for now
         io.to(User.TECH_MAIN.code).emit('tech_main connected list -activeUsers' , listConnectedUser );
+        io.to(User.TECH_MAIN.code).emit('tech_main connected list -caller' , listConnectedUser );
+
+        socket.on('register peer id' , (num_user , peerId) => {
+            console.log('register peer id ', num_user , peerId);
+            if ( connectedUserPeerId[num_user] ) {
+                connectedUserPeerId[num_user].add(peerId);
+            }else{
+                //new entry for num_user
+                connectedUserPeerId[num_user] = new Set();
+                connectedUserPeerId[num_user].add(peerId);
+            }
+            console.log('connectedUserPeerId ', connectedUserPeerId);
+        });
+
+        socket.on('get socket id', () => {
+            console.log('get socket id');
+            socket.emit('socket id', socket.id);
+        })
+
+        socket.on('get peer id', (num_user) => {
+            //get array of peer id of a user
+            let peerIds ;
+            if ( connectedUserPeerId[num_user] ) peerIds = Array.from(connectedUserPeerId[num_user]);
+            else peerIds = [];
+            console.log('get peer id', num_user , peerIds);
+            socket.emit('peer id', peerIds);
+        });
 
         socket.on('disconnect', async () => {
             let socketInRoom = await io.in(socket.num_user).allSockets();
+
+            if(connectedUserPeerId[socket.num_user]) connectedUserPeerId[socket.num_user].delete(socket.id);//peer id and socket id should be the same
+
             if( socketInRoom.size < 1 ) {
                 connectedUser.delete(socket.num_user);
+
+                if(connectedUserPeerId[socket.num_user]) delete connectedUserPeerId[socket.num_user];
+
                 let listConnectedUser = Array.from(connectedUser);
                 io.to(User.TECH_MAIN.code).emit('tech_main connected list -activeUsers' , listConnectedUser );
+                io.to(User.TECH_MAIN.code).emit('tech_main connected list -caller' , listConnectedUser );
+                io.to(User.TECH_MAIN.code).emit('tech_main connected list -called' , listConnectedUser );
             }
             console.log(new Date().toLocaleString()+'--a user has disconnected -- username : '+socket.username);
         });
@@ -73,10 +110,13 @@ function initSocketIO(httpServer){
 
         socket.on('get list tech_main connected',async () => {
             console.log('get list tech_main connected');
+            //all users , even no tech_main are in connectedUser , don't change for now
             console.log('listConnectedUser',Array.from(connectedUser));
             let listConnectedUser = Array.from(connectedUser);
            
             socket.emit('tech_main connected list -activeUsers' , listConnectedUser );
+            socket.emit('tech_main connected list -caller' , listConnectedUser );
+            socket.emit('tech_main connected list -called' , listConnectedUser );
         });
 
         socket.on('send message' , async (message) => {
@@ -237,8 +277,12 @@ function initSocketIO(httpServer){
 
             //emit 'new intervention' to room 'tech_main'
             io.to(User.TECH_MAIN.code).emit('new intervention' , newIntervention);
+            io.to(User.TECH_MAIN.code).emit('new intervention -main' , newIntervention);
+            io.to(User.TECH_MAIN.code).emit('new intervention -myTask' , newIntervention);
+            io.to(User.TECH_MAIN.code).emit('new intervention -interventionTimeline' , newIntervention);
             //emit 'update notifs list unanswered'
             io.to(User.TECH_MAIN.code).emit('update notifs list unanswered');
+            io.to(User.TECH_MAIN.code).emit('update notifs list unanswered -notifs');
             //emit 'notif from tech_main' to the room num_app_user_user
             if(notifInfo.found){
                 io.to(updatedNotif1.num_app_user_user).emit('notif from tech_main', notifInfo.row );
@@ -312,14 +356,31 @@ function initSocketIO(httpServer){
 
         socket.on('get undone intervention' , async (num_tech_main = null) => {
             console.log('get undone intervention' , num_tech_main);
-            const arrayUndoneIntervention = await database.getListInterventionUndone(num_tech_main);
-            //console.log('list undone intervention', arrayUndoneIntervention);
-            for( const interv of arrayUndoneIntervention ){
-                await database.getInterventionChildren(interv);
+            try{
+                const arrayUndoneIntervention = await database.getListInterventionUndone(num_tech_main);
+                //console.log('list undone intervention', arrayUndoneIntervention);
+                for( const interv of arrayUndoneIntervention ){
+                    await database.getInterventionChildren(interv);
+                }
+                socket.emit('list undone intervention' , arrayUndoneIntervention);
+                socket.emit('list undone intervention -myTask' , arrayUndoneIntervention);
+                socket.emit('list undone intervention -techActivityDisplay' , arrayUndoneIntervention);
+            }catch(err){
+                console.log('error in socket.on(get undone intervention) :' , err);
             }
-            socket.emit('list undone intervention' , arrayUndoneIntervention);
-            socket.emit('list undone intervention -myTask' , arrayUndoneIntervention);
-            socket.emit('list undone intervention -techActivityDisplay' , arrayUndoneIntervention);
+        });
+
+        socket.on('get nb undone intervention' , async (num_tech_main = null) => {
+            try{
+                console.log('get nb undone intervention');
+                const nbUndoneIntervention = await database.getNbInterventionUndoneForTechMain(num_tech_main);
+                console.log('get nb undone intervention for tech_main', nbUndoneIntervention);
+                socket.emit('nb intervention undone -main' , nbUndoneIntervention);
+                socket.emit('nb intervention undone -acimStack' , nbUndoneIntervention);
+            }catch(err){
+                console.log('error in socket.on(get nb intervention undone) :', err);
+            }
+
         });
 
         socket.on('get pending intervention' , async (num_tech_main) =>{
@@ -365,6 +426,7 @@ function initSocketIO(httpServer){
             const nbUnansweredNotif = await database.getNbNotificationUnanswered();
             console.log('nbUnansweredNotif' , nbUnansweredNotif);
             socket.emit('nb unanswered notifs -dashboard', nbUnansweredNotif);
+            socket.emit('nb unanswered notifs -acimStack', nbUnansweredNotif);
         });
 
         socket.on('get users list' , async () => {
@@ -534,6 +596,8 @@ function initSocketIO(httpServer){
                 await database.getInterventionChildren(updatedIntervention);
                 socket.emit('started intervention', updatedIntervention );
                 socket.emit('started intervention -techActivity', updatedIntervention );
+                socket.emit('started intervention -myTask', updatedIntervention );
+                socket.to(User.TECH_MAIN.code).emit('started intervention' , updatedIntervention);
             }catch(err){
                 console.log('error in socket.on(start intervention) ' , err);
             }
@@ -555,8 +619,13 @@ function initSocketIO(httpServer){
                 socket.emit('ended intervention', updatedIntervention );
                 socket.emit('ended intervention interventionPage', updatedIntervention );
                 socket.emit('ended intervention -techActivity', updatedIntervention);
+                socket.emit('ended intervention -myTask', updatedIntervention);
                 socket.to(User.TECH_MAIN.code).emit('ended intervention' ,updatedIntervention);
+                io.to(User.TECH_MAIN.code).emit('ended intervention -main' ,updatedIntervention);
+                io.to(User.TECH_MAIN.code).emit('ended intervention -acimStack' ,updatedIntervention);
+                io.to(User.TECH_MAIN.code).emit('ended intervention -interventionTimeline', updatedIntervention );
                 socket.to(User.TECH_MAIN.code).emit('ended intervention interventionPage' ,updatedIntervention);
+                socket.to(socket.num_user).emit('ended intervention' ,updatedIntervention);
             }catch(err){
                 console.log('error in socket.on(end intervention) ' , err);
             }
@@ -726,7 +795,9 @@ function initSocketIO(httpServer){
                 if( newIntervention ) {
                     console.log('intervention created ... send new Intervention');
                     io.to(User.TECH_MAIN.code).emit('new intervention', newIntervention);
+                    io.to(User.TECH_MAIN.code).emit('new intervention -main' , newIntervention);
                     io.to(User.TECH_MAIN.code).emit('new intervention -createIntervention', newIntervention);
+                    io.to(User.TECH_MAIN.code).emit('new intervention -interventionTimeline', newIntervention);
                 }
             }catch(err){
                 console.log('error in socket.on(create intervention)' , err);
