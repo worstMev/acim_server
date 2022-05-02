@@ -9,6 +9,10 @@ const User = {
         text : 'utilisateur',
         code : 'USER',
     },
+    ADMIN : {
+        text : 'admin',
+        code : 'ADMIN',
+    },
     DASH : { 
         text : 'tableau de bord',
         code : 'DASH',
@@ -18,9 +22,12 @@ const User = {
 async function getTypeUser ( hashTypeUser , key ) {
     const computedHash_USER       = await computeHmac(User.USER.code, key);
     const computedHash_TECH_MAIN  = await computeHmac(User.TECH_MAIN.code, key);
+    const computedHash_ADMIN      = await computeHmac(User.ADMIN.code, key);
+    //const computedHash_DASH  = await computeHmac(User.DASH.code, key);
     if ( computedHash_USER === hashTypeUser ) return User.USER ;
     if ( computedHash_TECH_MAIN === hashTypeUser ) return User.TECH_MAIN ;
-    if ( computedHash_DASH === hashTypeUser ) return User.DASH ;
+    if ( computedHash_ADMIN === hashTypeUser ) return User.ADMIN ;
+    //if ( computedHash_DASH === hashTypeUser ) return User.DASH ;
 }
 
 async function computeHmac( text , key ) {

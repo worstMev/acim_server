@@ -55,15 +55,22 @@ async function checkInDatabase(table , prop_array , value_array ){
     };
 }
 
-async function checkCredentials(username , pwd){
+async function checkCredentials(username , pwd , num_user = null){
     console.log('in checkCredentials');
+    //console.log(`in checkCredentials: ${username} , ${pwd} , ${num_user} `);
 
-    const query_text = 'SELECT * FROM app_user WHERE username = $1 AND password = crypt($2,password)';
+    let query_text = 'SELECT * FROM app_user WHERE username = $1 AND password = crypt($2,password)';
+    let valArray = [ username , pwd];
 
+    if(num_user) {
+        query_text ='SELECT * FROM app_user WHERE num_user = $1 AND password = crypt($2,password)';
+        valArray = [ num_user , pwd];
+
+    }
     let data ;
 
     try{
-        const { rows } = await pool.query(query_text,[username , pwd]);
+        const { rows } = await pool.query(query_text,valArray);
         data = rows[0];
         console.log(data);
         
@@ -90,6 +97,27 @@ async function getAggregate(table , aggr){
         if ( rows ) return rows[0];
     }catch(err){
         console.log('error in getAggregate', err);
+    }
+}
+
+async function getListAppUser() {
+     const query = `SELECT num_user , username , libelle from view_app_user_full;`;
+     try{
+         const { rows } = await pool.query(query);
+         if( rows ) return rows;
+     }catch(err){
+         console.log('error in getListAppUser :',err);
+     }
+}
+
+async function createUser(username , pwd , code_type_user) {
+    try{
+        const newUser = await insertIntoTable('app_user',['username', 'password' , 'type_user '] , [ username , pwd , code_type_user ]);
+        console.log('newUser' , newUser);
+        if (newUser) return newUser;
+        
+    }catch(err){
+        console.log('error in createUser ' ,err);
     }
 }
 
@@ -450,11 +478,34 @@ async function getDechargeInfo( num_decharge ){
     const query = 'SELECT * from view_decharge_full where num_decharge = $1';
     try{
         const { rows } = await pool.query(query,[num_decharge]);
-        console.log(rows);
+        //console.log('getDechargeInfo rows',rows);
         if (rows) return rows;
     }catch(err){
         console.log('error in getDechargeInfo', err);
     }
+}
+
+async function getAllDecharge(itemPerPage,currentPage){
+    const queryNumber = `SELECT count(*) from decharge;`;
+    //add page
+    const query = `SELECT * from decharge
+    ORDER BY date_fin_decharge ASC
+    LIMIT $1
+    OFFSET $2;`;
+    const arrayValue = [ itemPerPage ,  itemPerPage*(currentPage - 1)];
+    //console.log('getAllDecharge query ',query , arrayValue);
+    try{
+        const { rows } = await pool.query(query, arrayValue);
+        //console.log('getAllDecharge rows',rows);
+        const response = await pool.query(queryNumber);
+        if (rows) return {
+            rows,
+            number : response.rows[0].count,
+        };
+    }catch(err){
+        console.log('error in getAllDecharge', err);
+    }
+
 }
 
 async function getListInterventionUndone(num_tech_main = null) {
@@ -564,16 +615,21 @@ async function getDataInTable(table , arrayProp , arrayValue , orderClause = nul
     }
 }
 
-async function getAnnonces(num_recepteur) {
+async function getAnnonces(num_recepteur, itemPerPage, currentPage) {
     //get message ( is_annonce = true ) , 7 last days , today - 7 j
     const query = `SELECT * FROM view_annonce_recepteur_full
     WHERE num_app_user_recepteur = $1 
     ORDER BY date_envoie DESC
-    LIMIT 15;`
+    LIMIT $2
+    OFFSET $3;`;
+    const queryNb = `SELECT count(*) FROM view_annonce_recepteur_full
+    WHERE num_app_user_recepteur = $1;`;
+    const offset = itemPerPage*(currentPage - 1);
     try{
-        const { rows } = await pool.query(query, [num_recepteur]);
+        const response = await pool.query(queryNb, [num_recepteur]);
+        const { rows } = await pool.query(query, [num_recepteur, itemPerPage , offset ]);
         console.log('getAnnonces' , rows);
-        if(rows) return rows;
+        if(rows) return {rows, number : response.rows[0].count};
     }catch(err){
         console.log('error in getAnnonces', err);
     }
@@ -619,7 +675,7 @@ ORDER BY date_debut ASC`;
     }
 }
 
-async function getListIntervention(num_tech_main , debut , fin , done , probleme_resolu,num_intervention_type,num_intervention){
+async function getListIntervention(num_tech_main , debut , fin , done , probleme_resolu,num_intervention_type,num_intervention , currentPage , itemPerPage){
         
     let whereClauseArray = [
         'num_app_user_tech_main_creator = ',
@@ -648,19 +704,28 @@ async function getListIntervention(num_tech_main , debut , fin , done , probleme
     console.log('whereClause' , whereClause);
     let query_text = `SELECT * from view_intervention_full
     WHERE ${whereClause}
-    ORDER BY date_programme ASC`;
+    ORDER BY date_programme ASC
+    LIMIT $${whereClauseArray.length + 1}
+    OFFSET $${whereClauseArray.length + 2}`;
+    let arrayValueWithPage = [ ... arrayValue, itemPerPage , itemPerPage * ( currentPage -1)];
+    let query_text_full = `SELECT count(*) from view_intervention_full
+    WHERE ${whereClause}`;
 
-    console.log(query_text);
-    console.log(arrayValue);
+    console.log('query_text: ',query_text);
+    console.log(arrayValueWithPage);
+    //console.log('query_text_full: ',query_text_full);
+    //console.log(arrayValue);
       
     try{
-        const {rows} = await pool.query(query_text,arrayValue); 
+        const response = await pool.query(query_text_full,arrayValue); 
+        console.log('response ',response);
+        const {rows} = await pool.query(query_text,arrayValueWithPage); 
         //get all child of each intervention
         for( const interv of rows ){
             await getInterventionChildren(interv);
             //console.log(`interv.children of ${interv.num_intervention}`, interv.children);
         }
-        if(rows) return rows;
+        if(rows) return { rows, number : response.rows[0].count };
     }catch(err){
         console.log('error in getListIntervention',err);
     }
@@ -737,6 +802,8 @@ async function updateTable(table,setPropArray,setValueArray,wherePropArray,where
     WHERE ${whereClause}
     RETURNING *;
     `;
+    console.log(`updateTable query : ${query_text}`);
+    console.log(`updateTable value : ${valueArray}`);
     try{
         const { rows } = await pool.query(query_text,valueArray);
         if (rows) return rows;
@@ -877,6 +944,7 @@ module.exports = {
     getNbNewAnnonce,
     getListOfInterventionFromNotif,
     getDechargeInfo,
+    getAllDecharge,
     getNbNewMessage,
     getInterventionChildren,
     getNotificationDay,
@@ -894,4 +962,6 @@ module.exports = {
     createDechargeMateriel,
     sendMessage,
     updateTable,
+    getListAppUser,
+    createUser,
 }

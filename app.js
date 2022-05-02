@@ -78,7 +78,6 @@ app.get('/pdf/acim/decharge/:num_decharge', async (req,res) => {
 });
 app.get('/docx/acim/decharge/:num_decharge', async (req,res) => {
     let num_decharge = req.params.num_decharge;
-    const html = `hello world pdf , <p> decharge ${num_decharge} </p>`;
     let decharges = await database.getDechargeInfo(num_decharge);
     console.log('decharges ' , decharges);
     let decharge = {

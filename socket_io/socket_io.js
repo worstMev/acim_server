@@ -47,9 +47,11 @@ function initSocketIO(httpServer){
         //check the rooms
         const socketInMyRoom = await io.in(socket.num_user).allSockets();
         const sockets_user = await io.in(User.USER.code).allSockets();
+        const sockets_admin = await io.in(User.ADMIN.code).allSockets();
         const sockets_tech_main = await io.in(User.TECH_MAIN.code).allSockets();
         console.log( 'my room' , socketInMyRoom);
         console.log( 'user room' , sockets_user);
+        console.log( 'admin room' , sockets_admin);
         console.log( 'tech_main room' , sockets_tech_main.entries());
 
         let listConnectedUser = Array.from(connectedUser);
@@ -106,6 +108,119 @@ function initSocketIO(httpServer){
             //send a disconnect to all socket except self
             socket.to(socket.num_user).emit('you have to disconnect');
 
+        });
+
+        socket.on('get list app_user', async () => {
+            if( socket.type_user === User.ADMIN.code ) {
+                console.log('admin get list app_user');
+                try{
+                    const listAppUser = await database.getListAppUser();
+                    console.log('listAppUser' ,listAppUser);
+                    socket.emit('list app_user' , listAppUser);
+                }catch(err){
+                    console.log('error in socket.on(get list app_user', err);
+                }
+
+            }
+        });
+
+        socket.on('get list type_user' , async() => {
+            if( socket.type_user === User.ADMIN.code ) {
+                console.log('admin get list type_user');
+                try{
+                    const listTypeUser = await database.getAllDataInTable('type_user');
+                    console.log('listTypeUser' ,listTypeUser);
+                    socket.emit('list type_user' , listTypeUser);
+                }catch(err){
+                    console.log('error in socket.on(get list type_user', err);
+                }
+
+            }
+
+        });
+
+        socket.on('create user' , async(username , pwd , code) => {
+            console.log('create user' , username , pwd , code);
+            try{
+                const newUser = await database.createUser(username, pwd , code);
+                if (newUser){
+                    io.to(User.ADMIN.code).emit('update list app_user');
+                }else{
+                    console.log('ERROR no creation of new user');
+                    io.to(User.ADMIN.code).emit('error creating user');
+                }
+            }catch(err){
+                console.log('error in socket.on(create user) ', err);
+            }
+
+        });
+
+        socket.on('update user', async(newData) => {
+            console.log('update user');
+            //data = { num_user , nowPwd , username , codeTypeUser, pwd(if change pwd)};
+            if( socket.type_user === User.ADMIN.code ) {
+                console.log('update user', newData);
+                let{
+                    num_user,
+                    username , 
+                    oldUsername,
+                    nowPwd,
+                    pwd,
+                    codeTypeUser,
+                } = newData;
+                //security : check Credentials
+                //no username in security , in case we want to change the username
+                
+                try{
+                    let user = await database.checkCredentials(oldUsername, nowPwd, num_user);
+                    
+                    console.log('user found', user);
+                    if (user.found) {
+                        console.log('user update is allowed');
+                        let setArray;
+                        if( pwd ) {
+                            setArray = {
+                                prop : [ 'username' ,'password', 'type_user'] , //still incomplete
+                                value : [ username , pwd , codeTypeUser],
+                            };
+                        } else {
+                            setArray = {
+                                prop : [ 'username' , 'type_user'] , //still incomplete
+                                value : [ username ,  codeTypeUser],
+                            };
+                        }
+                        let whereArray = {
+                            prop : [ 'num_user'],
+                            value : [ num_user ],
+                        };
+                        let updatedUser = await database.updateTable('app_user',setArray.prop,setArray.value,whereArray.prop,whereArray.value);
+                        if(updatedUser){
+                            console.log('updatedUser', updatedUser);
+                            io.to(User.ADMIN.code).emit('update list app_user');
+                        }
+                    }
+                }catch(err){
+                    console.log('error in socket(update user):', err);
+                }
+            }
+        });
+
+        socket.on('get user data', async (num_user) => {
+            if( socket.type_user === User.ADMIN.code ) {
+                console.log('admin get user data', num_user);
+                try{
+                    const res = await database.checkInDatabase('view_app_user_full',['num_user'],[num_user]);
+                    console.log('user data',res);
+                    if(res.found){
+                        let { username , code , num_user } = res.row;
+                        let userData = { username , code , num_user };
+                        socket.emit('user data',userData);
+                    }
+
+                }catch(err){
+                    console.log('error in socket.on(get user data)', err);
+                }
+            }
         });
 
         socket.on('get list tech_main connected',async () => {
@@ -185,11 +300,11 @@ function initSocketIO(httpServer){
 
         });
 
-        socket.on('get annonce', async (num_app_user_recepteur) => {
+        socket.on('get annonce', async (num_app_user_recepteur ,itemPerPage, currentPage) => {
             console.log('get annonce');
             try{
-                const annonces = await database.getAnnonces(num_app_user_recepteur);
-                socket.emit('annonces -annonceList' , annonces);
+                const annonces = await database.getAnnonces(num_app_user_recepteur , itemPerPage ,currentPage);
+                socket.emit('annonces -annonceList' , annonces.rows , annonces.number);
             }catch(err){
                 console.log('error in socket.on(get annonce)', err);
             }
@@ -307,23 +422,27 @@ function initSocketIO(httpServer){
         socket.on('get notifs history',async (num_user) => {
             console.log('get notifs history server', num_user);
             num_user = ( num_user === '0' ) ? undefined : num_user ;
-            const notifsTab = await database.getHistoryNotificationForUser(num_user);
-            //console.log('notifTab' , notifsTab );
-            if( notifsTab ) io.to(socket.num_user).emit('notifs history', notifsTab);
+            try{
+                const notifsTab = await database.getHistoryNotificationForUser(num_user);
+                //console.log('notifTab' , notifsTab );
+                if( notifsTab ) io.to(socket.num_user).emit('notifs history', notifsTab);
+            }catch(err){
+                console.log('error in socket.on(get notifs history) ', err);
+            }
         });
 
-        socket.on('get intervention history', async (num_tech_main , date_debut , date_fin , statut,num_intervention_type, num_intervention) => {
-            console.log(new Date().toLocaleTimeString()+' socket.on(get intervention history)' , num_tech_main , date_debut , date_fin , statut,num_intervention_type, num_intervention);
+        socket.on('get intervention history', async (num_tech_main , date_debut , date_fin , statut,num_intervention_type, num_intervention, currentPage , itemPerPage) => {
+            console.log(new Date().toLocaleTimeString()+' socket.on(get intervention history)' , num_tech_main , date_debut , date_fin , statut,num_intervention_type, num_intervention ,currentPage , itemPerPage);
             try{
                 const minDateProgramme = await database.getAggregate('view_intervention_full' , 'min(date_programme)');
                 if(!date_debut) date_debut = minDateProgramme.min;
                 
                 console.log(' socket.on(get intervention history)' , num_tech_main , date_debut , date_fin , statut ,num_intervention_type, num_intervention);
-                const interventionList = await database.getListIntervention(num_tech_main,date_debut , date_fin , statut.done , statut.probleme_resolu, num_intervention_type ,num_intervention);
+                const interventionList = await database.getListIntervention(num_tech_main,date_debut , date_fin , statut.done , statut.probleme_resolu, num_intervention_type ,num_intervention, currentPage , itemPerPage);
 
-                //console.log('list Intervention' , interventionList  );
-                socket.emit('intervention history' , interventionList );
-                socket.emit('intervention history -myTask' , interventionList );
+                console.log('list Intervention' , interventionList  );
+                socket.emit('intervention history' , interventionList.rows , interventionList.number );
+                socket.emit('intervention history -myTask' , interventionList.rows ,interventionList.number );
             }catch(err){
                 console.log('error in socket.on(get intervention history)',err);
             }
@@ -1058,6 +1177,47 @@ function initSocketIO(httpServer){
                 console.log('error in socket.on(update intervention info) updateIntervention',err);
             }
             //updateDecharge
+        });
+
+        socket.on('get all decharge' , async (itemPerPage, currentPage) => {
+            console.log('get all decharge');
+            let decharges = [] ;//array of decharge obj
+            try{
+                //get all num_decharge
+                const { rows , number }  = await database.getAllDecharge(itemPerPage, currentPage);//num_decharge,num_intervention ,date_debut_decharge ,date_fin_decharge
+                //console.log('get all decharge , get all date in decharge' ,allDecharge);
+                //console.log('get all decharge number', number);
+                const allDecharge = rows;
+                for ( const decharge of allDecharge ){
+                    //console.log('========= treat decharge', decharge); 
+                    const dechargesData = await database.getDechargeInfo(decharge.num_decharge);//return multiple of entry in view_dehcarge_full with corresponding num_decharge
+                    let dechargeObj = {
+                        num_decharge : decharge.num_decharge,
+                        date_debut : new Date(decharge.date_debut_decharge).toLocaleDateString(),
+                        date_fin : new Date(decharge.date_fin_decharge).toLocaleDateString(),
+                        num_intervention : decharge.num_intervention,
+                        tech_main_username: dechargesData[0].username,
+                        materiels : [],
+                    }
+                    for ( const dech of dechargesData){
+                        dechargeObj.materiels.push({
+                            num_materiel : dech.num_materiel,
+                            libelle_materiel : dech.libelle_materiel,
+                            libelle_materiel_type : dech.libelle_materiel_type,
+                            config_origine : dech.configuration_origine,
+                        });
+                    }
+                    decharges.push(dechargeObj);
+                }
+                //console.log('decharges in get all decharge', decharges);
+                socket.emit('all decharge', decharges, number);
+            }catch(err){
+                console.log('error in socket.on(get all decharge) :',err);
+            }
+            //for num => getDechargeInfo then make matos[] and {dechargeObj}
+            //push in array
+            //emit array back
+            
         });
         
     });
