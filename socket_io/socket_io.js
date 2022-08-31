@@ -366,7 +366,7 @@ function initSocketIO(httpServer){
             let { probleme_type ,remarque , tech_main_username , date_envoie , lieu , num_lieu , user_sender_username , statut_libelle} = updatedNotif;
             console.log(`${tech_main_username} arrive pour le probleme ${probleme_type} notifie a ${new Date(date_envoie).toLocaleString('fr-FR')}.`);
             //create the intervention 
-            let motif = ` reponse a une notification de ${user_sender_username} , ${probleme_type} - ${lieu} - ${statut_libelle}`;
+            let motif = ` réponse à une notification de ${user_sender_username} , ${probleme_type} - ${lieu} - ${statut_libelle}`;
             let date_programme = new Date( now_date.getTime() + delai*60*1000 );
             let num_intervention_type = null;
             let code_intervention_type = 'REP_NOTIF';
@@ -419,13 +419,13 @@ function initSocketIO(httpServer){
             }
         });
 
-        socket.on('get notifs history',async (num_user) => {
-            console.log('get notifs history server', num_user);
+        socket.on('get notifs history',async (num_user, itemPerPage, currentPage) => {
+            console.log('get notifs history: ', num_user, itemPerPage, currentPage);
             num_user = ( num_user === '0' ) ? undefined : num_user ;
             try{
-                const notifsTab = await database.getHistoryNotificationForUser(num_user);
+                const notifsTab = await database.getHistoryNotificationForUser(num_user, itemPerPage, currentPage);
                 //console.log('notifTab' , notifsTab );
-                if( notifsTab ) io.to(socket.num_user).emit('notifs history', notifsTab);
+                if( notifsTab ) io.to(socket.num_user).emit('notifs history', notifsTab.rows , notifsTab.number );
             }catch(err){
                 console.log('error in socket.on(get notifs history) ', err);
             }
@@ -489,6 +489,21 @@ function initSocketIO(httpServer){
             }
         });
 
+        socket.on('get partaking intervention' , async (num_tech_main = null) => {
+            console.log('get partaking intervention' , num_tech_main);
+            try{
+                const arrayPartakingIntervention = await database.getListInterventionPartaking(num_tech_main);
+                //console.log('list undone intervention', arrayUndoneIntervention);
+                for( const interv of arrayPartakingIntervention ){
+                    await database.getInterventionChildren(interv);
+                }
+                socket.emit('list partaking intervention' , arrayPartakingIntervention);
+                socket.emit('list partaking intervention -myTask' , arrayPartakingIntervention);
+                socket.emit('list partaking intervention -techActivityDisplay' , arrayPartakingIntervention);
+            }catch(err){
+                console.log('error in socket.on(get partaking intervention) :' , err);
+            }
+        });
         socket.on('get nb undone intervention' , async (num_tech_main = null) => {
             try{
                 console.log('get nb undone intervention');
@@ -574,12 +589,12 @@ function initSocketIO(httpServer){
             }
         });
 
-        socket.on('get list intervention_notification' , async (num_user) => {
-            console.log('get list intervention_notification', num_user);
-            const int_notifList = await database.getListOfInterventionFromNotif(num_user);
+        socket.on('get list intervention_notification' , async (num_user, itemPerPage, currentPage) => {
+            console.log('get list intervention_notification', num_user, itemPerPage, currentPage);
+            const int_notifList = await database.getListOfInterventionFromNotif(num_user, itemPerPage, currentPage);
             console.log('intervention' , int_notifList);
             if (int_notifList) {
-                socket.emit('list intervention_notification', int_notifList);
+                socket.emit('list intervention_notification', int_notifList.rows , int_notifList.number);
             }
         });
 
@@ -816,7 +831,20 @@ function initSocketIO(httpServer){
                 socket.emit('materiel list' , materiels,materielTypes);
                 socket.emit('materiel list -materielSelector' , materiels,materielTypes,lieus);
             }catch(err){
-                console.log('error in socket.on(get materiel list)', err);
+                console.log('error in socket.on(get materiel list) :', err);
+            }
+        });
+
+        socket.on('get materiel list in place', async () => {
+            console.log('get materiel list in place');
+            try{
+                const materielTypes = await database.getAllDataInTable('materiel_type');
+                const lieus = await database.getAllDataInTable('lieu');
+                const materiels = await database.getAllDataInTable('view_materiel_in_place_full');
+                socket.emit('materiel list in place' , materiels,materielTypes);
+                socket.emit('materiel list in place -materielSelector' , materiels,materielTypes,lieus);
+            }catch(err){
+                console.log('error in socket.on(get materiel list in place) :' , err);
             }
         });
         
@@ -1179,25 +1207,43 @@ function initSocketIO(httpServer){
             //updateDecharge
         });
 
+        socket.on('get decharge info full', async (num_decharge) => {
+            console.log('get decharge info full' , num_decharge);
+            try{
+                const dech = await database.getDechargeInfoFull(num_decharge);
+                console.log('decharge info full',dech);
+                socket.emit('decharge info full -interventionDecharge', dech);
+                socket.emit('get decharge info full -interventionPage', dech);
+            }catch(err){
+                console.log('error in socket(get decharge info full):', err);
+            }
+        });
+
         socket.on('get all decharge' , async (itemPerPage, currentPage) => {
             console.log('get all decharge');
             let decharges = [] ;//array of decharge obj
             try{
                 //get all num_decharge
-                const { rows , number }  = await database.getAllDecharge(itemPerPage, currentPage);//num_decharge,num_intervention ,date_debut_decharge ,date_fin_decharge
+                const { rows , number }  = await database.getAllDecharge(itemPerPage, currentPage);//num_decharge,num_intervention ,date_debut_decharge ,date_fin_decharge, is_all_working , is_all_in_place , is_archived
                 //console.log('get all decharge , get all date in decharge' ,allDecharge);
                 //console.log('get all decharge number', number);
                 const allDecharge = rows;
                 for ( const decharge of allDecharge ){
                     //console.log('========= treat decharge', decharge); 
                     const dechargesData = await database.getDechargeInfo(decharge.num_decharge);//return multiple of entry in view_dehcarge_full with corresponding num_decharge
+                    const renews = await database.getRenouvellement(decharge.num_decharge);
                     let dechargeObj = {
                         num_decharge : decharge.num_decharge,
+                        is_all_working : decharge.is_all_working,
+                        is_all_in_place : decharge.is_all_in_place,
+                        is_archived : decharge.is_archived,
                         date_debut : new Date(decharge.date_debut_decharge).toLocaleDateString(),
                         date_fin : new Date(decharge.date_fin_decharge).toLocaleDateString(),
                         num_intervention : decharge.num_intervention,
                         tech_main_username: dechargesData[0].username,
+                        num_tech_main : dechargesData[0].num_tech_main,
                         materiels : [],
+                        renews : renews,
                     }
                     for ( const dech of dechargesData){
                         dechargeObj.materiels.push({
@@ -1205,6 +1251,9 @@ function initSocketIO(httpServer){
                             libelle_materiel : dech.libelle_materiel,
                             libelle_materiel_type : dech.libelle_materiel_type,
                             config_origine : dech.configuration_origine,
+                            is_working : dech.is_working,
+                            is_in_place : dech.is_in_place,
+                            lieu : dech.lieu,
                         });
                     }
                     decharges.push(dechargeObj);
@@ -1214,12 +1263,114 @@ function initSocketIO(httpServer){
             }catch(err){
                 console.log('error in socket.on(get all decharge) :',err);
             }
-            //for num => getDechargeInfo then make matos[] and {dechargeObj}
-            //push in array
-            //emit array back
             
         });
+
+        socket.on('update materiel', async (setPropArray , setValueArray , num_materiel)=>{
+            console.log('update materiel:', setPropArray , setValueArray , num_materiel);
+            try{
+                const updatedMatos = await database.updateMateriel( setPropArray , setValueArray , ['num_materiel'] , [num_materiel]);
+                console.log('updatedMatos', updatedMatos);
+                //broadcast to all tech_main
+                io.to(User.TECH_MAIN.code).emit('updated materiel', updatedMatos);
+                
+            }catch(err){
+                console.log('error in socket.on(udpate materiel) ', err);
+            }
+
+        });
         
+        socket.on('update decharge', async (setPropArray , setValueArray , num_decharge)=>{
+            console.log('update decharge:', setPropArray , setValueArray , num_decharge);
+            try{
+                //check if num_user is creator of the decharge
+                const rowDecharge = await database.checkInDatabase('view_decharge_full',['num_decharge','num_tech_main'] , [num_decharge, socket.num_user]);//returns just the first match but there can be many 
+                if( rowDecharge.found ) {
+                    const updatedDecharge = await database.updateDecharge( setPropArray , setValueArray , ['num_decharge'] , [num_decharge]);
+                    console.log('updatedDecharge', updatedDecharge);
+                    //broadcast to all tech_main
+                    io.to(User.TECH_MAIN.code).emit('updated decharge', updatedDecharge);
+                }else{
+                    throw new Error('tech is not in charge');
+                }
+                
+            }catch(err){
+                console.log('error in socket.on(udpate decharge) ', err);
+            }
+
+        });
+
+        socket.on('log call' , async (num_notification , duration, num_user, num_tech_main) => {
+            console.log('log call: ' , num_notification ,duration ,num_user ,num_tech_main);
+            //creata appel vocal ( num_notification , duration (ms))
+            try{
+            const { num_appel_vocal } = await database.createCall(num_notification,duration);
+            }catch(err){
+                console.log('error in socket.on(log call)',err);
+            }
+        });
+
+        socket.on('get all participants', async (num_intervention) => {
+            console.log('get all participants', num_intervention);
+            try{
+                //get all participants to an intervention
+                const participants = await database.getAllParticipants(num_intervention);
+
+                if(participants){
+                    socket.emit(`all participants -intervention -${num_intervention}`,participants);
+                }
+            } catch(err){
+                console.log('error in socket.on(get all participants): ',err);
+            }
+        });
+
+        socket.on('ask to partake', async (num_intervention, num_user) => {
+            console.log('ask to partake', num_intervention, num_user);
+            try{
+                //check if not owner of intervention
+                const ownerIsMe = await database.checkInDatabase('intervention', ['num_intervention', 'num_app_user_tech_main_creator'] , [num_intervention, socket.num_user]);
+                if( !ownerIsMe.found ){
+                    const newPendingParticipant = await database.createParticipant(num_intervention,num_user);
+                    const intervention = await database.checkInDatabase('intervention',['num_intervention'],[num_intervention]);
+                    if( intervention.found ) {
+                        const num_user_owner = intervention.row.num_app_user_tech_main_creator;
+                        //emit a demand to partake has been sent : notify the owner
+                        io.to(num_user_owner).emit('new partaking request -main',num_intervention);
+                        io.to(num_user_owner).emit(`new partaking request -${num_intervention}`,num_intervention);
+                    }
+
+                    //update the participant of the intervention
+                    socket.emit(`update participants -${num_intervention}`);
+                }
+
+            }catch(err){
+                console.log('error in socket.on(ask to partake) : ' ,err);
+            }
+        });
+
+        socket.on('update partaking', async (setPropArray,setValueArray,num_intervention,num_user) => {
+            console.log('update partaking',setPropArray,setValueArray,num_intervention,num_user);
+            try{
+                //check if owner of intervention
+                const ownerIsMe = await database.checkInDatabase('intervention', ['num_intervention', 'num_app_user_tech_main_creator'] , [num_intervention, socket.num_user]);
+                    if( ownerIsMe.found ) {
+                        const updatedPartaking = await database.updatePartaking(setPropArray,setValueArray,['num_intervention', 'num_user'],[num_intervention,num_user]);
+                        console.log('updatedPartaking',updatedPartaking);
+                        if ( updatedPartaking[0].num_intervention && updatedPartaking[0].num_user ) {
+                            console.log('send participant back');
+                            let {
+                                num_intervention,
+                                num_user,
+                            } = updatedPartaking[0];
+                            //inform num_user that he can now partake
+                            //update participants
+                            socket.emit(`update participants -${num_intervention}`);
+                        }
+                    }
+            }catch(err){
+                console.log('error in socket.on(update partaking) :', err);
+            }
+        });
     });
 
 }

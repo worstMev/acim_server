@@ -133,6 +133,17 @@ async function getNbNewAnnonce(num_user){
     }
 }
 
+async function getAllParticipants(num_intervention){
+    const query = `SELECT * from view_intervention_participant
+    WHERE num_intervention = $1 ;`;
+    try{
+        const { rows } = await pool.query(query, [num_intervention]);
+        if (rows) return rows;
+    }catch(err){
+        console.log('error in getAllParticipants', err);
+    }
+}
+
 async function getNbNewMessage(num_receiver , num_sender){
     console.log('getNbNewMessage' , num_receiver , num_sender);
     const query_text = `SELECT count(*) from view_message_full
@@ -247,16 +258,23 @@ async function getNotification(arrayProp,arrayVal){
     }
 }
 
-async function getHistoryNotificationForUser(num_user){
+async function getHistoryNotificationForUser(num_user , itemPerPage, currentPage){
     const query = `SELECT * FROM view_notification_full 
     ${(num_user) ? 'WHERE num_app_user_user = $1' : ''} 
-    ORDER BY date_envoie DESC`;
+    ORDER BY date_envoie DESC
+    LIMIT $2
+    OFFSET $3;`;
+    const queryNb = `SELECT count(*) FROM view_notification_full 
+    ${(num_user) ? 'WHERE num_app_user_user = $1' : ''}`;
     const value = (num_user) ? [ num_user ] : [];
+    const offset = itemPerPage*(currentPage-1);
     try{
-        const result = await pool.query(query, value);
+        const response = await pool.query(queryNb, value);
+        value.push( itemPerPage, offset);
+        const { rows } = await pool.query(query, value);
         //console.log('history ',result.rows);
-        if( result.rows ){
-            return result.rows;
+        if( rows ){
+            return {rows , number : response.rows[0].count };
         }
     }catch(err){
         console.log('problem in getHistoryNotificationForUser' , err);
@@ -399,6 +417,20 @@ async function createInterventionType(libelle, code){
     }
 }
 
+
+async function createParticipant(num_intervention, num_user){
+    console.log('createParticipant', num_intervention , num_user);
+    try{
+        let newPendingParticipant = await insertIntoTable('participer_app_user_intervention',['num_intervention','num_user','is_confirmed'],[num_intervention, num_user, false]);
+        if( newPendingParticipant.num_intervention )
+            return newPendingParticipant;
+        else
+            throw `createParticipant failed for ${num_intervention} -- ${num_user}`;
+    }catch(err){
+        console.log('error in createParticipant :',err);
+    }
+}
+
 async function createProblemeTechType(libelle){
     console.log('createProblemeTechType' , libelle );
     try{
@@ -411,6 +443,11 @@ async function createProblemeTechType(libelle){
     }catch(err){
         console.log('error in createProblemeTechType' , err);
     }
+}
+
+async function createCall(num_notification , duration){
+
+    //appel_vocal ( num_notification , duree_appel_vocal)
 }
 
 async function sendMessage(message){
@@ -465,6 +502,17 @@ async function createDecharge ( arrayProp , valueProp){
     }
 }
 
+async function updateMateriel(setPropArray,setValueArray,wherePropArray,whereValueArray){
+    try{
+        const updatedMateriel = await updateTable('materiel',setPropArray,setValueArray,wherePropArray,whereValueArray)
+        if(updatedMateriel) return updatedMateriel;
+    }catch(err){
+        console.log('error in updateMateriel :', err);
+    }
+}
+
+
+
 async function createDechargeMateriel ( arrayProp , valueProp){
     try{
         const newDechargeMateriel = await insertIntoTable('decharge_materiel', arrayProp , valueProp);
@@ -475,7 +523,7 @@ async function createDechargeMateriel ( arrayProp , valueProp){
 }
 
 async function getDechargeInfo( num_decharge ){
-    const query = 'SELECT * from view_decharge_full where num_decharge = $1';
+    const query = 'SELECT * from view_decharge_full where num_decharge = $1 ORDER BY num_materiel';
     try{
         const { rows } = await pool.query(query,[num_decharge]);
         //console.log('getDechargeInfo rows',rows);
@@ -485,11 +533,51 @@ async function getDechargeInfo( num_decharge ){
     }
 }
 
+async function getDechargeInfoFull(num_decharge) {
+    try{
+        const res  = await checkInDatabase('decharge',['num_decharge'],[num_decharge]);
+        if(res.found){
+            const decharge = res.row;
+            const dechargesData = await getDechargeInfo(num_decharge);//return multiple of entry in view_dehcarge_full with corresponding num_decharge
+            const renews = await getRenouvellement(num_decharge);
+            let dechargeObj = {
+                num_decharge : num_decharge,
+                is_all_working : decharge.is_all_working,
+                is_all_in_place : decharge.is_all_in_place,
+                is_archived : decharge.is_archived,
+                date_debut : new Date(decharge.date_debut_decharge).toLocaleDateString(),
+                date_fin : new Date(decharge.date_fin_decharge).toLocaleDateString(),
+                num_intervention : decharge.num_intervention,
+                tech_main_username: dechargesData[0].username,
+                num_tech_main : dechargesData[0].num_tech_main,
+                materiels : [],
+                renews : renews,
+            }
+            for ( const dech of dechargesData){
+                dechargeObj.materiels.push({
+                    num_materiel : dech.num_materiel,
+                    libelle_materiel : dech.libelle_materiel,
+                    libelle_materiel_type : dech.libelle_materiel_type,
+                    config_origine : dech.configuration_origine,
+                    is_working : dech.is_working,
+                    is_in_place : dech.is_in_place,
+                    lieu : dech.lieu,
+                });
+            }
+            return dechargeObj;
+        }else{
+            throw new Error('getDechargeInfoFull decharge not found');
+        }
+    }catch(err){
+        console.log('error in getDechargeInfoFull:', err);
+    }
+}
+
 async function getAllDecharge(itemPerPage,currentPage){
     const queryNumber = `SELECT count(*) from decharge;`;
     //add page
     const query = `SELECT * from decharge
-    ORDER BY date_fin_decharge ASC
+    ORDER BY is_archived ASC, date_fin_decharge ASC, date_creation_decharge ASC, num_decharge ASC
     LIMIT $1
     OFFSET $2;`;
     const arrayValue = [ itemPerPage ,  itemPerPage*(currentPage - 1)];
@@ -531,6 +619,29 @@ async function getListInterventionUndone(num_tech_main = null) {
     }
 }
 
+async function getListInterventionPartaking(num_tech_main = null) {
+    let whereClause;
+    let arrayValue;
+    if(num_tech_main){
+        whereClause = ` num_user_participant = $1 AND is_confirmed = true `;
+        arrayValue = [ num_tech_main ];
+    }else{
+        //normally, this should never run
+        whereClause = ' num_user_participant IS NOT NUll AND is_confirmed = true';
+    }
+    
+
+    const query_text = `SELECT * from view_intervention_participant_full 
+    WHERE ${whereClause}
+    ORDER BY date_programme ASC`
+    console.log('getListInterventionPartaking query' , query_text);
+    try{
+        const { rows } = await pool.query(query_text , arrayValue);
+        if( rows ) return rows;
+    }catch(err){
+        console.log('error in getListInterventionPartaking' , err);
+    }
+}
 async function getNbInterventionUndoneForTechMain(num_tech_main = null){
     let whereClause;
     let arrayValue;
@@ -659,12 +770,18 @@ async function getListInterventionForReport(num_tech_main, debut , fin ){
     //debut and fin are in local
     //db in UTC so local - 3
     //toutes interventions debuté entre debut et fin
+    //we added [OR ... ] for participation
     const query_text = `select * from view_intervention_full
-WHERE num_app_user_tech_main_creator = $1
-AND date_debut >= $2::date+ time '00:00' - time '03:00'
-AND date_debut <= $3::date+ time '23:59' - time '03:00'
-ORDER BY date_debut ASC`;
+    WHERE (
+        num_app_user_tech_main_creator = $1
+        OR num_intervention IN ( select num_intervention from participer_app_user_intervention where num_user = $1 and is_confirmed = true)
+        )
+    AND date_debut IS NOT NULL
+    AND date_debut >= $2::date+ time '00:00' - time '03:00'
+    AND date_debut <= $3::date+ time '23:59' - time '03:00'
+    ORDER BY date_debut ASC`;
     let values = [ num_tech_main, debut , fin];
+    console.log('getListInterventionForReport query ', query_text ,values);
     try{
         const { rows } = await pool.query(query_text,values);
         if(rows){
@@ -772,20 +889,27 @@ async function getNbInterventionUndone () {
     }
 }
 
-async function getListOfInterventionFromNotif(num_user) {
+async function getListOfInterventionFromNotif(num_user, itemPerPage, currentPage) {
     
     const query = `SELECT * FROM view_notification_by_user_intervention 
     ${(num_user) ? 'WHERE num_app_user_user = $1' : ''} 
-    ORDER BY date_programme DESC`;
+    ORDER BY date_programme DESC
+    LIMIT $2
+    OFFSET $3;`;
+    const queryNb = `SELECT count(*) FROM view_notification_by_user_intervention
+    ${(num_user) ? 'WHERE num_app_user_user = $1' : ''} ;`;
     const value = (num_user) ? [ num_user ] : [];
+    const offset = itemPerPage*(currentPage-1);
     try{
-        const result = await pool.query(query, value);
+        const response = await pool.query(queryNb, value);
+        value.push( itemPerPage, offset);
+        const { rows } = await pool.query(query, value);
         //console.log('history ',result.rows);
-        if( result.rows ){
-            for( const interv of result.rows ) {
+        if( rows ){
+            for( const interv of rows ) {
                 await getInterventionChildren(interv);
             }
-            return result.rows;
+            return {rows , number: response.rows[0].count };
         }
     }catch(err){
         console.log('problem in getListOfInterventionFromNotif' , err);
@@ -848,6 +972,32 @@ async function updateDecharge(setPropArray,setValueArray,wherePropArray, whereVa
     }catch(err){
         console.log('error in updateDecharge', err);
     }
+}
+
+async function updatePartaking(setPropArray,setValueArray,wherePropArray, whereValueArray){
+    try{
+        const updatedPartaking = await updateTable('participer_app_user_intervention',setPropArray,setValueArray,wherePropArray, whereValueArray);
+        if (updatedPartaking) return updatedPartaking;
+    }catch(err){
+        console.log('error in updatePartaking', err);
+    }
+}
+
+async function getRenouvellement(num_decharge) {
+    // reparation_locale = decharge
+    const query = `SELECT * 
+    from view_renouvellement_full 
+    where num_reparation_locale = $1
+    `;
+    const value = [num_decharge];
+    try{
+        const {rows} = await pool.query(query,value);
+        if(rows) return rows;
+        
+    }catch(err){
+        console.log('error in getRenouvellement', err);
+    }
+
 }
 
 async function getStatsDates(debut, fin , num_tech_main){
@@ -921,12 +1071,14 @@ module.exports = {
     checkInDatabase,
     checkCredentials,
     createAnnonce,
+    createParticipant,
     createInterventionType,
     createProblemeTechType,
     getStatsDates,
     getAggregate,
     getAgenda,
     getAnnonces,
+    getAllParticipants,
     getListProblem ,
     getListLieu,
     getListProblemeStatut,
@@ -935,6 +1087,7 @@ module.exports = {
     getHistoryNotificationForUser,
     getListNotificationUnanswered,
     getListInterventionUndone,
+    getListInterventionPartaking,
     getNbInterventionUndoneForTechMain,
     getListInterventionPending,
     getListInterventionDoneToday,
@@ -944,7 +1097,9 @@ module.exports = {
     getNbNewAnnonce,
     getListOfInterventionFromNotif,
     getDechargeInfo,
+    getDechargeInfoFull,
     getAllDecharge,
+    getRenouvellement,
     getNbNewMessage,
     getInterventionChildren,
     getNotificationDay,
@@ -954,6 +1109,8 @@ module.exports = {
     updateIntervention,
     updateInterventionFull,
     updateDecharge,
+    updatePartaking,
+    updateMateriel,
     createNotif,
     createIntervention,
     createInterventionCustom,

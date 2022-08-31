@@ -24,8 +24,10 @@ async function generateDocx(decharge) {
         tech_main_username,
         num_intervention,
         materiels,
+        renews,
     } = decharge;
     let materielsElement = [];
+    let renewsElement = [];
     for(const [index,mat] of materiels.entries()){
         let el = new Paragraph({
             bullet : {
@@ -51,6 +53,23 @@ async function generateDocx(decharge) {
         });
         materielsElement.push(el);
     }
+    for( const renew of renews ) {
+        let { 
+            date_creation_renouvellement , 
+            ancienne_date,
+            new_date,
+            username,
+        } = renew;
+        const date_renew = new Date(date_creation_renouvellement).toLocaleString();
+        const old = new Date(ancienne_date).toLocaleDateString();
+        const newd = new Date(new_date).toLocaleDateString();
+        let el = new TextRun({
+            break : 1,
+            text : `Renouvellée le ${date_renew} du ${old} au ${newd} par ${username}. `,
+        });
+        renewsElement.push(el);
+        
+    }
     const doc = new Document ({
         sections : [
             {
@@ -68,7 +87,7 @@ async function generateDocx(decharge) {
                     }),
                     new Paragraph({
                         children : [
-                            new TextRun('Decharge de matériel pour maintenance'),
+                            new TextRun('Décharge de matériel pour maintenance'),
                         ],
                         spacing : {
                             before : 200,
@@ -95,7 +114,7 @@ async function generateDocx(decharge) {
                             }),
                             new TextRun({
                                 break : 3,
-                                text : `Pour les matériels :`,
+                                text : `Pour ${ (materiels.length > 1) ? 'les matériels' : 'le matériel'} :`,
                             }),
                         ],
                     }),
@@ -106,6 +125,16 @@ async function generateDocx(decharge) {
                     type : SectionType.CONTINUOUS,
                 },
                 children : materielsElement,
+            },
+            {
+                properties : {
+                    type : SectionType.CONTINUOUS,
+                },
+                children : [
+                    new Paragraph({
+                        children : renewsElement,
+                    }),
+                ],
             },
             {
                 properties : {
@@ -133,7 +162,7 @@ async function generateDocx(decharge) {
                     new Paragraph({
                         children : [
                             new TextRun({
-                                text : `Generé le ${new Date().toLocaleString('fr-FR')}`,
+                                text : `Généré le ${new Date().toLocaleString('fr-FR')}`,
                             }),
                         ],
                     }),
@@ -149,9 +178,9 @@ async function generateDocx(decharge) {
 }
 
 
-async function generateRapportDocx(intervs, debut ,fin) {
+async function generateRapportDocx(intervs, debut ,fin,myself) {
     let intervTableRows = [];
-    let username = intervs[0].tech_main_username;
+    let username = myself.username;
     debut = new Date(debut).toLocaleDateString('fr-FR');
     fin = new Date(fin).toLocaleDateString('fr-FR');
     let textRapport = `Rapport d'activité de (${username})  du ${debut} au ${fin}`;
@@ -173,6 +202,10 @@ async function generateRapportDocx(intervs, debut ,fin) {
         let motif = interv.motif || 'nd';
         let libelle_probleme_tech_type = interv.libelle_probleme_tech_type || 'nd';
         let commentaire = interv.commentaire || '';
+        let description = `${interv.libelle_intervention_type}-${commentaire}`;
+        if ( interv.num_app_user_tech_main_creator !== myself.num_user ){
+            description = `Participe à une intervention de ${interv.tech_main_username} : ${interv.libelle_intervention_type}-${commentaire} `
+        }
         let newTableRow = new TableRow({
             cantSplit : true,
             children: [
@@ -216,7 +249,7 @@ async function generateRapportDocx(intervs, debut ,fin) {
                         size : '12%',
                         type : WidthType.PERCENTAGE,
                     },
-                    children: [new Paragraph(`${interv.libelle_intervention_type}-${commentaire}`)],
+                    children: [new Paragraph(description)],
                 }),
                 new TableCell({
                     width : {
@@ -279,7 +312,7 @@ async function generateRapportDocx(intervs, debut ,fin) {
                             }),
                             new TextRun({
                                 break : 1,
-                                text : `Pseudo dans a.c.i.m : ${username}`,
+                                text : `Pseudo dans a.c.i.m.i : ${username}`,
                             }),
                         ],
                     }),
